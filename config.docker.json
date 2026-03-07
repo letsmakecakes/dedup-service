@@ -1,0 +1,35 @@
+{
+  "server": {
+    "listen_addr": ":8081",
+    "log_level": "info",
+    "shutdown_timeout": "10s"
+  },
+  "log": {
+    "file": "log/app.log",
+    "max_size_mb": 50,
+    "max_backups": 5,
+    "max_age_days": 30,
+    "compress": true
+  },
+  "redis": {
+    "addr": "redis:6379",
+    "password": "",
+    "db": 0,
+    "dial_timeout": "500ms",
+    "read_timeout": "200ms",
+    "write_timeout": "200ms",
+    "pool_size": 100,
+    "min_idle": 20
+  },
+  "dedup": {
+    "window": "10s",
+    "max_body_bytes": 65536,
+    "fail_open": true,
+    "exclude_methods": ["GET", "HEAD", "OPTIONS"]
+  },
+  "performance": {
+    "local_cache": true,
+    "gogc": 200,
+    "store_timeout": "500ms"
+  }
+}
