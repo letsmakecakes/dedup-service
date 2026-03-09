@@ -123,11 +123,16 @@ assert_status "Same body, different query param is allowed (200)" 200 "$status"
 # ── 6. Non-POST methods return 404 ───────────────────────────────────
 
 echo ""
-echo "$(bold '6. Non-POST Methods Return 404 (Router-Level Rejection)')"
-for method in GET PUT DELETE PATCH; do
+echo "$(bold '6. Non-POST/GET Methods Return 404 (Router-Level Rejection)')"
+for method in PUT DELETE PATCH; do
     status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 -X "$method" "$BASE_URL/dedup-check")
     assert_status "$method /dedup-check returns 404" 404 "$status"
 done
+
+# GET /dedup-check is registered for Nginx auth_request sub-requests.
+# Without X-Original-Method, the method stays GET (excluded) → 200.
+status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 -X GET "$BASE_URL/dedup-check")
+assert_status "GET /dedup-check returns 200 (auth_request route)" 200 "$status"
 
 # ── 7. Different auth headers still deduplicated ─────────────────────
 
