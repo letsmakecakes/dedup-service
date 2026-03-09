@@ -1,0 +1,28 @@
+# Build artifacts
+bin/
+*.exe
+*.test
+
+# Coverage
+coverage.out
+
+# Logs
+log/
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS junk
+.DS_Store
+Thumbs.db
+nul
+
+# Docker image tarballs
+*.tar
+
+# Environment overrides (keep .env.example)
+.env
