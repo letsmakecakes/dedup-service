@@ -75,7 +75,7 @@ func TestLocalCache_SweepLoop(t *testing.T) {
 	c.Set("key1", 20*time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	go c.sweepLoop(ctx, 30*time.Millisecond)
+	go c.SweepLoop(ctx, 30*time.Millisecond)
 
 	time.Sleep(100 * time.Millisecond)
 	cancel()

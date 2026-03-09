@@ -81,8 +81,8 @@ func (c *LocalCache) Len() int {
 	return n
 }
 
-// sweepLoop periodically evicts expired entries. Stops when ctx is cancelled.
-func (c *LocalCache) sweepLoop(ctx context.Context, interval time.Duration) {
+// SweepLoop periodically evicts expired entries. Stops when ctx is cancelled.
+func (c *LocalCache) SweepLoop(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
