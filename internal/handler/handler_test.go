@@ -216,6 +216,71 @@ func TestConflictResponseHasJSONContentType(t *testing.T) {
 	}
 }
 
+// ── X-Original-* header support (Nginx auth_request) ──────────────────────────
+
+func TestXOriginalMethodOverridesRequestMethod(t *testing.T) {
+	// Simulate Nginx auth_request: sub-request arrives as GET, but
+	// X-Original-Method is POST → handler should treat as POST (dedup-active).
+	s := store.NewMemory()
+	h := newDedup(baseCfg(), s)
+
+	rr := httptest.NewRecorder()
+	router := gin.New()
+	router.Any("/dedup-check", h.Handle)
+
+	// First request via GET with X-Original-Method: POST.
+	r1 := httptest.NewRequest("GET", "/dedup-check", strings.NewReader(`{"k":"v"}`))
+	r1.Header.Set("X-Original-Method", "POST")
+	r1.Header.Set("X-Original-URI", "/api/orders")
+	router.ServeHTTP(rr, r1)
+	assertStatus(t, rr, http.StatusOK)
+
+	// Same payload → duplicate. Behind auth_request → 403 (Nginx maps to 409).
+	rr2 := httptest.NewRecorder()
+	r2 := httptest.NewRequest("GET", "/dedup-check", strings.NewReader(`{"k":"v"}`))
+	r2.Header.Set("X-Original-Method", "POST")
+	r2.Header.Set("X-Original-URI", "/api/orders")
+	router.ServeHTTP(rr2, r2)
+	assertStatus(t, rr2, http.StatusForbidden)
+}
+
+func TestXOriginalMethodGETStillExcluded(t *testing.T) {
+	// If the original method is GET, it should still be excluded.
+	h := newDedup(baseCfg(), store.NewMemory())
+
+	rr := httptest.NewRecorder()
+	router := gin.New()
+	router.Any("/dedup-check", h.Handle)
+
+	req := httptest.NewRequest("GET", "/dedup-check", nil)
+	req.Header.Set("X-Original-Method", "GET")
+	router.ServeHTTP(rr, req)
+	assertStatus(t, rr, http.StatusOK)
+}
+
+func TestXOriginalURIUsedInFingerprint(t *testing.T) {
+	// Different X-Original-URI → different fingerprint → not a duplicate.
+	s := store.NewMemory()
+	h := newDedup(baseCfg(), s)
+
+	rr := httptest.NewRecorder()
+	router := gin.New()
+	router.Any("/dedup-check", h.Handle)
+
+	r1 := httptest.NewRequest("GET", "/dedup-check", strings.NewReader(`{}`))
+	r1.Header.Set("X-Original-Method", "POST")
+	r1.Header.Set("X-Original-URI", "/api/orders")
+	router.ServeHTTP(rr, r1)
+	assertStatus(t, rr, http.StatusOK)
+
+	rr2 := httptest.NewRecorder()
+	r2 := httptest.NewRequest("GET", "/dedup-check", strings.NewReader(`{}`))
+	r2.Header.Set("X-Original-Method", "POST")
+	r2.Header.Set("X-Original-URI", "/api/payments")
+	router.ServeHTTP(rr2, r2)
+	assertStatus(t, rr2, http.StatusOK) // different URI, not duplicate
+}
+
 // ── /healthz ──────────────────────────────────────────────────────────────────
 
 func TestHealthOK(t *testing.T) {

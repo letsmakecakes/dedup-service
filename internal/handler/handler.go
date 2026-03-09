@@ -57,6 +57,19 @@ func NewDedup(cfg *config.Config, s store.Store, logger zerolog.Logger) *DedupHa
 
 // Handle is the Gin handler function for POST /dedup-check.
 func (h *DedupHandler) Handle(c *gin.Context) {
+	// When behind Nginx auth_request, the sub-request arrives as GET to
+	// /dedup-check. Use X-Original-* headers to recover the client's values.
+	// Also track whether we're in auth_request mode to return the correct
+	// status code (auth_request only handles 200, 401, 403).
+	behindAuthRequest := false
+	if m := c.GetHeader("X-Original-Method"); m != "" {
+		c.Request.Method = m
+		behindAuthRequest = true
+	}
+	if u := c.GetHeader("X-Original-URI"); u != "" {
+		c.Request.RequestURI = u
+	}
+
 	// Skip dedup for explicitly excluded methods (GET, HEAD, OPTIONS).
 	if h.cfg.IsMethodExcluded(c.Request.Method) {
 		metrics.DedupChecksTotal.WithLabelValues("excluded").Inc()
@@ -64,7 +77,9 @@ func (h *DedupHandler) Handle(c *gin.Context) {
 		return
 	}
 
-	// Build fingerprint from method + URI + body only.
+	// Build fingerprint from method + URI + body.
+	// NOTE: In auth_request mode the body is always empty (Nginx does not
+	// forward it), so the fingerprint effectively covers method + URI only.
 	fp, err := fingerprint.FromHTTP(c.Request)
 	if err != nil {
 		h.logger.Error().Err(err).
@@ -109,13 +124,20 @@ func (h *DedupHandler) Handle(c *gin.Context) {
 	}
 
 	if isDuplicate {
-		h.logger.Info().
+		h.logger.Debug().
 			Str("key", key).
 			Str("method", fp.Method).
 			Str("uri", fp.URI).
 			Msg("duplicate request blocked")
 		metrics.DedupChecksTotal.WithLabelValues("duplicate").Inc()
-		c.Data(http.StatusConflict, jsonContentType, duplicateJSON)
+		// Nginx auth_request only accepts 200, 401, 403. Return 403 so
+		// Nginx triggers error_page → @duplicate_rejected → 409 to client.
+		// For direct calls (no X-Original-Method), return 409 directly.
+		if behindAuthRequest {
+			c.Status(http.StatusForbidden)
+		} else {
+			c.Data(http.StatusConflict, jsonContentType, duplicateJSON)
+		}
 		return
 	}
 
