@@ -44,6 +44,18 @@ type Config struct {
 	// excludeSet is an O(1) lookup table built from ExcludeMethods.
 	excludeSet map[string]struct{}
 
+	// ── Proxy mode ───────────────────────────────────────────────────────────
+	UpstreamURL string // Backend URL for reverse-proxy mode (e.g. "http://localhost:9000").
+	// When set, the service acts as a reverse proxy: requests pass
+	// through dedup and allowed ones are forwarded to the upstream.
+	// When empty, the service operates in sidecar/auth_request mode.
+
+	// ── X-Accel-Redirect mode ────────────────────────────────────────────────
+	XAccelRedirectPrefix string // Internal Nginx location prefix (e.g. "/internal/upstream").
+	// When set, the service returns X-Accel-Redirect headers for
+	// allowed requests so Nginx forwards to the real upstream.
+	// Body is available for fingerprinting in this mode.
+
 	// ── Performance ──────────────────────────────────────────────────────────
 	LocalCacheEnabled bool          // L1 in-process cache for duplicate lookups
 	GOGC              int           // Go GC target percentage (0 = use Go default of 100)
@@ -84,6 +96,16 @@ func Load(configPath ...string) (*Config, error) {
 	v.SetDefault("dedup.max_body_bytes", 65536)
 	v.SetDefault("dedup.fail_open", true)
 	v.SetDefault("dedup.exclude_methods", []string{"GET", "HEAD", "OPTIONS"})
+
+	v.SetDefault("proxy.upstream_url", "")
+	v.SetDefault("proxy.x_accel_redirect_prefix", "")
+
+	// ── Environment variable overrides ────────────────────────────────────────
+	// Bind specific env vars so the service can be configured without a JSON
+	// file. The DEDUP_ prefix avoids collisions with other services.
+	v.SetEnvPrefix("DEDUP")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
 
 	// ── Read JSON config file ─────────────────────────────────────────────────
 	if len(configPath) > 0 && configPath[0] != "" {
@@ -166,6 +188,9 @@ func Load(configPath ...string) (*Config, error) {
 		FailOpen:       v.GetBool("dedup.fail_open"),
 		ExcludeMethods: methods,
 
+		UpstreamURL:          v.GetString("proxy.upstream_url"),
+		XAccelRedirectPrefix: v.GetString("proxy.x_accel_redirect_prefix"),
+
 		LocalCacheEnabled: v.GetBool("performance.local_cache"),
 		GOGC:              v.GetInt("performance.gogc"),
 		StoreTimeout:      storeTimeout,
@@ -216,6 +241,9 @@ func (c *Config) validate() error {
 	}
 	if c.RedisPoolSize <= 0 {
 		return fmt.Errorf("redis.pool_size must be positive, got %d", c.RedisPoolSize)
+	}
+	if c.StoreTimeout <= 0 {
+		return fmt.Errorf("performance.store_timeout must be positive, got %s", c.StoreTimeout)
 	}
 	return nil
 }
