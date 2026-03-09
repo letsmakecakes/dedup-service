@@ -69,7 +69,7 @@ func Logging(logger zerolog.Logger) gin.HandlerFunc {
 		switch {
 		case status >= 500:
 			evt = logger.Error()
-		case status >= 400 || duration > 100*time.Millisecond:
+		case (status >= 400 && status != http.StatusConflict) || duration > 100*time.Millisecond:
 			evt = logger.Warn()
 		default:
 			evt = logger.Debug()
