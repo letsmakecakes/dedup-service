@@ -16,6 +16,7 @@ package fingerprint
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"hash"
 	"io"
 	"net/http"
 	"sync"
@@ -107,14 +108,17 @@ func (f *Request) Hash() string {
 	return string(buf[:])
 }
 
+// GetBodyBuf returns a pooled byte buffer of MaxBodyBytes.
+// The caller must call PutBodyBuf when done.
+func GetBodyBuf() *[]byte { return bodyPool.Get().(*[]byte) }
+
+// PutBodyBuf returns a buffer obtained from GetBodyBuf to the pool.
+func PutBodyBuf(b *[]byte) { bodyPool.Put(b) }
+
 // hashInto computes the SHA-256 and writes the 64 hex chars into dst.
 // dst must be at least 64 bytes. The hasher is borrowed from a pool.
 func (f *Request) hashInto(dst []byte) {
-	h := hasherPool.Get().(interface {
-		io.Writer
-		Sum(b []byte) []byte
-		Reset()
-	})
+	h := hasherPool.Get().(hash.Hash)
 	h.Reset()
 
 	// Write method and URI as raw bytes (zero-copy via unsafe).
