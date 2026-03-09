@@ -11,13 +11,19 @@ Prevents duplicate HTTP requests from reaching upstream services by fingerprinti
 ## How It Works
 
 ```
-Client ──► Nginx ──► auth_request ──► dedup-service ──► Redis SETNX
-                          │                  │
-                    200 OK (new)       409 Conflict (dup)
-                          │
-                          ▼
-                   Upstream Backend
+Client ──► Nginx ──► dedup-service ──► Redis SETNX
+                         │                 │
+              200 + X-Accel-Redirect   409 Conflict (dup)
+             (not a duplicate)              │
+                         │            returned to client
+                         ▼
+                  Upstream Backend
 ```
+
+Nginx sends the full client request (method, URI, headers, body) to the dedup service via `proxy_pass`. The service fingerprints the request, checks Redis, and responds:
+
+- **Allowed** → `200` with `X-Accel-Redirect` header → Nginx internally redirects to the upstream backend (HTTP method and body are preserved).
+- **Duplicate** → `409 Conflict` with JSON body → returned directly to the client.
 
 ### Fingerprint
 
@@ -49,8 +55,12 @@ dedup-service/
 │   │   ├── fingerprint.go              # SHA-256 fingerprint computation
 │   │   └── fingerprint_test.go         # Determinism, per-field uniqueness, no-IP tests
 │   ├── handler/
-│   │   ├── handler.go                  # /dedup-check and /healthz Gin handlers
-│   │   └── handler_test.go             # Allow/reject/fail-open/fail-closed/expiry tests
+│   │   ├── handler.go                  # /dedup-check and /healthz Gin handlers (legacy sidecar)
+│   │   ├── xaccel.go                   # X-Accel-Redirect handler (body-based dedup)
+│   │   ├── proxy.go                    # Reverse-proxy handler (Go proxies to upstream)
+│   │   ├── handler_test.go             # Legacy sidecar handler tests
+│   │   ├── xaccel_test.go              # X-Accel-Redirect handler tests
+│   │   └── proxy_test.go               # Reverse-proxy handler tests
 │   ├── metrics/
 │   │   └── metrics.go                  # Prometheus counters and histograms
 │   ├── middleware/
@@ -60,7 +70,7 @@ dedup-service/
 │       ├── localcache.go               # Sharded L1 in-process cache (256 shards, FNV-1a)
 │       ├── cached_store.go             # L1 → L2 (Redis) cache wrapper
 │       └── store_test.go               # MemoryStore, LocalCache, CachedStore tests
-├── nginx/dedup.conf                    # Nginx auth_request configuration
+├── nginx/dedup.conf                    # Nginx X-Accel-Redirect configuration
 └── Makefile
 ```
 
@@ -72,7 +82,7 @@ dedup-service/
 
 - Go 1.22+
 - Redis 7+
-- Nginx with `http_auth_request_module` (`nginx -V 2>&1 | grep auth_request`)
+- Nginx (standard build — no auth_request module required)
 
 ### Run locally
 
@@ -174,6 +184,8 @@ cp config.json config.json.bak   # backup before editing
 | `dedup.max_body_bytes` | `65536` | Max body bytes hashed (64 KB) |
 | `dedup.fail_open` | `true` | Allow requests if Redis is down |
 | `dedup.exclude_methods` | `["GET","HEAD","OPTIONS"]` | Methods that bypass dedup |
+| `proxy.x_accel_redirect_prefix` | _(empty)_ | Nginx internal location prefix (e.g. `/internal/upstream`). Enables X-Accel-Redirect mode with body-based dedup. |
+| `proxy.upstream_url` | _(empty)_ | Upstream URL for reverse-proxy mode (Go proxies directly). |
 | `performance.local_cache` | `true` | L1 in-process cache for duplicates |
 | `performance.gogc` | `0` (Go default) | Go GC target percentage |
 | `performance.store_timeout` | `500ms` | Context deadline for Redis calls |
@@ -196,11 +208,27 @@ sudo cp nginx/dedup.conf /etc/nginx/conf.d/dedup.conf
 sudo nginx -t && sudo nginx -s reload
 ```
 
-Key directives:
+Start the dedup service in X-Accel-Redirect mode:
 
-- `auth_request /internal/dedup-check` — calls dedup service for every request
-- `proxy_pass_request_body on` — forwards body so Go service can hash it
-- `error_page 403 = @duplicate_rejected` — remaps auth_request rejection to 409
+```bash
+export DEDUP_PROXY_X_ACCEL_REDIRECT_PREFIX=/internal/upstream
+./bin/dedup-service
+```
+
+How it works:
+
+1. Nginx sends every request (with body) to the dedup service via `proxy_pass`.
+2. The service returns `200` with `X-Accel-Redirect: /internal/upstream{URI}` for allowed requests, or `409` for duplicates.
+3. Nginx internally redirects allowed requests to the `/internal/upstream` location, which proxies to the real backend.
+4. The original HTTP method and request body are preserved across the internal redirect.
+
+### Operating Modes
+
+| Mode | Config | Body in fingerprint? | Who forwards to upstream? |
+|---|---|---|---|
+| **X-Accel-Redirect** (recommended) | `proxy.x_accel_redirect_prefix` | Yes | Nginx |
+| **Reverse proxy** | `proxy.upstream_url` | Yes | Go service |
+| **Legacy sidecar** (auth_request) | _(both empty)_ | No (auth_request limitation) | Nginx |
 
 ---
 
@@ -213,7 +241,7 @@ Options:
 **1. Exclude the route entirely (simplest):**
 ```nginx
 location /api/public/ {
-    proxy_pass http://backend_service;  # no auth_request
+    proxy_pass http://backend_service;  # no dedup
 }
 ```
 
@@ -235,7 +263,8 @@ proxy_set_header X-Device-ID $http_x_device_id;
 
 | Endpoint | Method | Called by | Normal response |
 |---|---|---|---|
-| `/dedup-check` | `POST` | Nginx `auth_request` | `200` (allow) or `409` (duplicate) |
+| `/*` (catch-all) | Any | Nginx `proxy_pass` (X-Accel mode) | `200` + `X-Accel-Redirect` (allow) or `409` (duplicate) |
+| `/dedup-check` | `POST` | Nginx `auth_request` (legacy mode) | `200` (allow) or `403`→`409` (duplicate) |
 | `/healthz` | `GET` | Load balancer / K8s probe | `200` (Redis reachable) or `503` |
 | `/metrics` | `GET` | Prometheus scraper | Prometheus text exposition format |
 
