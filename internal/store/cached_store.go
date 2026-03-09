@@ -34,7 +34,7 @@ func NewCached(backend Store) *CachedStore {
 		cache:   NewLocalCache(),
 		cancel:  cancel,
 	}
-	go cs.cache.sweepLoop(ctx, 10*time.Second)
+	go cs.cache.SweepLoop(ctx, 10*time.Second)
 	return cs
 }
 
