@@ -2,7 +2,7 @@
 //
 // The Store interface is the only dependency that handler and main.go care about.
 // Two implementations are provided:
-//   - RedisStore: production, backed by Redis SETNX
+//   - RedisStore: production, backed by Redis SET … NX
 //   - MemoryStore: in-process, for unit tests only (not safe for multi-instance deployments)
 package store
 
@@ -72,18 +72,24 @@ func NewRedis(cfg *config.Config) (*RedisStore, error) {
 // IsDuplicate executes SET key 1 NX PX <ttl-ms>.
 //
 // Redis semantics:
-//   - SetNX returns true  → key was absent and has now been set → first occurrence → NOT a duplicate.
-//   - SetNX returns false → key already existed                 → duplicate detected.
+//   - SET NX returns "OK"    → key was absent and has now been set → NOT a duplicate.
+//   - SET NX returns redis.Nil → key already existed               → duplicate detected.
 //
 // Any Redis error is wrapped as ErrUnavailable so the caller can apply fail-open logic.
 func (s *RedisStore) IsDuplicate(ctx context.Context, key string, ttl time.Duration) (bool, error) {
-	set, err := s.client.SetNX(ctx, key, 1, ttl).Result()
+	err := s.client.SetArgs(ctx, key, 1, redis.SetArgs{
+		Mode: "NX",
+		TTL:  ttl,
+	}).Err()
 	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			// Key already existed → duplicate
+			return true, nil
+		}
 		return false, fmt.Errorf("%w: %s", ErrUnavailable, err.Error())
 	}
-	// set=true  → we just created the key → not a duplicate
-	// set=false → key existed             → duplicate
-	return !set, nil
+	// "OK" → key was created → not a duplicate
+	return false, nil
 }
 
 // Ping checks Redis connectivity.
