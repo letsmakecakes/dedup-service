@@ -29,7 +29,7 @@
   },
   "proxy": {
     "upstream_url": "",
-    "x_accel_redirect_prefix": ""
+    "x_accel_redirect_prefix": "/internal/upstream"
   },
   "performance": {
     "local_cache": true,
