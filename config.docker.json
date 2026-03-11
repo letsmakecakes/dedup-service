@@ -27,6 +27,10 @@
     "fail_open": true,
     "exclude_methods": ["GET", "HEAD", "OPTIONS"]
   },
+  "proxy": {
+    "upstream_url": "",
+    "x_accel_redirect_prefix": "/internal/upstream"
+  },
   "performance": {
     "local_cache": true,
     "gogc": 200,

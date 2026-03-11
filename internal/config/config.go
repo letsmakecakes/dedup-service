@@ -100,13 +100,6 @@ func Load(configPath ...string) (*Config, error) {
 	v.SetDefault("proxy.upstream_url", "")
 	v.SetDefault("proxy.x_accel_redirect_prefix", "")
 
-	// ── Environment variable overrides ────────────────────────────────────────
-	// Bind specific env vars so the service can be configured without a JSON
-	// file. The DEDUP_ prefix avoids collisions with other services.
-	v.SetEnvPrefix("DEDUP")
-	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-	v.AutomaticEnv()
-
 	// ── Read JSON config file ─────────────────────────────────────────────────
 	if len(configPath) > 0 && configPath[0] != "" {
 		v.SetConfigFile(configPath[0])
