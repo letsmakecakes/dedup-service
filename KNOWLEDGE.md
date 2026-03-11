@@ -596,7 +596,7 @@ main() → run()
 Every request passes through these in order:
 
 1. **Recovery**: Catches panics → 500 JSON + stack trace log
-2. **RequestID**: Sets `X-Request-ID` (client-provided or 16-byte hex)
+2. **RequestID**: Sets `X-Request-ID` (client-provided or 16-byte hex). Used for **request correlation** — tracing a single request across Client → Nginx → Dedup Service → Backend. The same ID appears in Nginx access logs, dedup service structured logs (zerolog `request_id` field), backend logs, and the response to the client. If the client sends an `X-Request-ID` header, it's reused; otherwise a random 16-byte hex string is generated.
 3. **Logging**: Structured zerolog per-request (status-aware log levels)
 4. **Metrics**: Prometheus counters + histograms
 
