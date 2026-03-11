@@ -971,11 +971,29 @@ SHA-256 provides collision resistance. With millions of requests per day, even a
 
 ### Why 256 Shards for L1 Cache?
 
-256 independent RWMutex-protected maps reduce lock contention under high concurrency. FNV-1a provides excellent distribution. The overhead (256 map headers) is negligible. At 200 concurrent goroutines, each shard sees ~1 goroutine on average.
+Without sharding, every goroutine reading or writing to the cache competes for a single `sync.RWMutex`. At 200+ concurrent requests, that mutex becomes a bottleneck — goroutines spend more time waiting for the lock than doing actual work.
+
+With 256 shards, each shard has its own `RWMutex`. A request's key is hashed with FNV-1a to pick one of 256 shards, so on average at 200 concurrent goroutines, each shard sees ~1 goroutine — virtually no contention. Reads (the hot path for duplicate detection) can happen in parallel across different shards since `RLock` doesn't block other readers.
+
+**Trade-off**: 256 map headers + 256 mutexes in memory — negligible overhead for a major concurrency win.
 
 ### Why Not Use Redis Lua Scripts?
 
-`SET NX PX` is a single atomic command — no need for Lua. It's simpler, faster, and avoids the complexity of script loading and caching.
+`SET NX PX` is the perfect primitive for deduplication because it does exactly what we need in a **single atomic operation**: check if the fingerprint key exists, and set it with a TTL if it doesn't.
+
+If two identical requests arrive at the same millisecond across different service instances, Redis guarantees only one `SET NX` succeeds — the other gets `Nil`. No race condition, no Lua script, no distributed lock needed.
+
+```
+Request A: SET dedup:abc123 1 NX PX 10000  →  OK    (first, allowed)
+Request B: SET dedup:abc123 1 NX PX 10000  →  Nil   (duplicate, blocked)
+```
+
+The alternatives are worse:
+- **GET then SET**: Race condition — two requests could both GET "not found" and both SET
+- **Lua script**: Same atomicity but more complexity (script loading, caching, debugging)
+- **WATCH/MULTI**: Optimistic locking with retries — unnecessary overhead for a simple case
+
+`SET NX PX` gives atomic check-and-set + automatic expiry in one round-trip.
 
 ### Why Body is Capped at 64 KB?
 
