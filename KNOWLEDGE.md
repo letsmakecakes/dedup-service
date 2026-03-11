@@ -28,6 +28,7 @@
 19. [Makefile Targets](#19-makefile-targets)
 20. [Troubleshooting](#20-troubleshooting)
 21. [Design Decisions & Trade-offs](#21-design-decisions--trade-offs)
+22. [X-Accel-Redirect — How It Works Under the Hood](#22-x-accel-redirect--how-it-works-under-the-hood)
 
 ---
 
@@ -88,23 +89,23 @@ The service supports three modes, selected via config/environment variables:
 
 ### 3.1 X-Accel-Redirect Mode (Recommended)
 
-**Set**: `DEDUP_PROXY_X_ACCEL_REDIRECT_PREFIX=/internal/upstream`
+**Set in config.json**: `"proxy": { "x_accel_redirect_prefix": "/internal/upstream" }`
 
 Nginx sends the full client request (including body) to the dedup service. The service fingerprints method + URI + body and returns:
 - **200** + `X-Accel-Redirect: /internal/upstream{URI}` → Nginx internally redirects to the backend
 - **409** → Nginx returns the duplicate error to the client
 
-**Advantages**: Full body available for fingerprinting. Nginx remains the router. Best of both worlds.
+**Advantages**: Full body available for fingerprinting. Nginx remains the router. Works for any URI dynamically — no per-route config needed.
 
 ### 3.2 Reverse Proxy Mode
 
-**Set**: `DEDUP_PROXY_UPSTREAM_URL=http://localhost:9000`
+**Set in config.json**: `"proxy": { "upstream_url": "http://localhost:9000" }`
 
-The dedup service acts as a reverse proxy. Requests pass through dedup, and allowed ones are forwarded to the upstream. No Nginx required.
+The dedup service acts as a reverse proxy. Requests pass through dedup, and allowed ones are forwarded to the upstream. No Nginx required. The client's URI path is preserved, but the **destination host is fixed** to the configured upstream URL — all traffic goes to the same backend.
 
 ### 3.3 Sidecar / Auth-Request Mode (Legacy)
 
-**Set**: Neither of the above (default)
+**Set in config.json**: Leave both `proxy.x_accel_redirect_prefix` and `proxy.upstream_url` empty (default)
 
 Nginx uses `auth_request` to call `POST /dedup-check`. The body is **NOT** available (Nginx limitation), so fingerprinting covers method + URI only.
 
@@ -187,7 +188,7 @@ L1 cache.Contains(key)?
 
 ### Enabling/Disabling
 
-- **Enabled by default**: `DEDUP_PERFORMANCE_LOCAL_CACHE=true`
+- **Enabled by default**: `performance.local_cache: true` in config.json
 - Set to `false` to bypass L1 and always hit Redis
 
 ---
@@ -227,62 +228,78 @@ If same request arrives within 10s:
 
 ## 7. Configuration Reference
 
-Configuration is loaded from `config.json` (Viper) with environment variable overrides.
+Configuration is loaded exclusively from `config.json` (via Viper). There are **no environment variable overrides** — all settings must be in the JSON file. If the file is missing, hardcoded defaults are used.
+
+Two config files are provided:
+- `config.json` — local development (Redis at `localhost:6379`, sidecar mode)
+- `config.docker.json` — Docker/K8s (Redis at `redis:6379`, X-Accel mode with `/internal/upstream`)
 
 ### Server
 
-| Field | Default | Env Var | Description |
-|-------|---------|---------|-------------|
-| `server.listen_addr` | `:8081` | `DEDUP_LISTEN_ADDR` | HTTP bind address |
-| `server.log_level` | `info` | `DEDUP_LOG_LEVEL` | `debug` / `info` / `warn` / `error` |
-| `server.shutdown_timeout` | `10s` | `DEDUP_SHUTDOWN_TIMEOUT` | Graceful shutdown drain period |
+| Field | Default | Description |
+|-------|---------|-------------|
+| `server.listen_addr` | `:8081` | HTTP bind address |
+| `server.log_level` | `info` | `debug` / `info` / `warn` / `error` |
+| `server.shutdown_timeout` | `10s` | Graceful shutdown drain period |
 
 ### Logging
 
-| Field | Default | Env Var | Description |
-|-------|---------|---------|-------------|
-| `log.file` | `log/app.log` | `DEDUP_LOG_FILE` | Log file path |
-| `log.max_size_mb` | `50` | `DEDUP_LOG_MAX_SIZE_MB` | Max size before rotation |
-| `log.max_backups` | `5` | `DEDUP_LOG_MAX_BACKUPS` | Old log files to keep |
-| `log.max_age_days` | `30` | `DEDUP_LOG_MAX_AGE_DAYS` | Days to retain old logs |
-| `log.compress` | `true` | `DEDUP_LOG_COMPRESS` | Gzip rotated files |
+| Field | Default | Description |
+|-------|---------|-------------|
+| `log.file` | `log/app.log` | Log file path |
+| `log.max_size_mb` | `50` | Max size before rotation |
+| `log.max_backups` | `5` | Old log files to keep |
+| `log.max_age_days` | `30` | Days to retain old logs |
+| `log.compress` | `true` | Gzip rotated files |
 
 ### Redis
 
-| Field | Default | Env Var | Description |
-|-------|---------|---------|-------------|
-| `redis.addr` | `localhost:6379` | `DEDUP_REDIS_ADDR` | Redis host:port |
-| `redis.password` | *(empty)* | `DEDUP_REDIS_PASSWORD` | Redis auth password |
-| `redis.db` | `0` | `DEDUP_REDIS_DB` | Logical database (0-15) |
-| `redis.dial_timeout` | `2s` | `DEDUP_REDIS_DIAL_TIMEOUT` | TCP connection timeout |
-| `redis.read_timeout` | `200ms` | `DEDUP_REDIS_READ_TIMEOUT` | Socket read timeout |
-| `redis.write_timeout` | `200ms` | `DEDUP_REDIS_WRITE_TIMEOUT` | Socket write timeout |
-| `redis.pool_size` | `100` | `DEDUP_REDIS_POOL_SIZE` | Connection pool size |
-| `redis.min_idle` | `20` | `DEDUP_REDIS_MIN_IDLE` | Minimum idle connections |
+| Field | Default | Description |
+|-------|---------|-------------|
+| `redis.addr` | `localhost:6379` | Redis host:port |
+| `redis.password` | *(empty)* | Redis auth password |
+| `redis.db` | `0` | Logical database (0-15) |
+| `redis.dial_timeout` | `2s` | TCP connection timeout |
+| `redis.read_timeout` | `200ms` | Socket read timeout |
+| `redis.write_timeout` | `200ms` | Socket write timeout |
+| `redis.pool_size` | `100` | Connection pool size |
+| `redis.min_idle` | `20` | Minimum idle connections |
 
 ### Deduplication
 
-| Field | Default | Env Var | Description |
-|-------|---------|---------|-------------|
-| `dedup.window` | `10s` | `DEDUP_WINDOW` | TTL for fingerprint keys in Redis |
-| `dedup.max_body_bytes` | `65536` | `DEDUP_MAX_BODY_BYTES` | Max body bytes read for hashing |
-| `dedup.fail_open` | `true` | `DEDUP_FAIL_OPEN` | Allow requests when Redis is unreachable |
-| `dedup.exclude_methods` | `GET,HEAD,OPTIONS` | `DEDUP_EXCLUDE_METHODS` | Methods that bypass dedup |
+| Field | Default | Description |
+|-------|---------|-------------|
+| `dedup.window` | `10s` | TTL for fingerprint keys in Redis |
+| `dedup.max_body_bytes` | `65536` | Max body bytes read for hashing |
+| `dedup.fail_open` | `true` | Allow requests when Redis is unreachable |
+| `dedup.exclude_methods` | `["GET","HEAD","OPTIONS"]` | Methods that bypass dedup |
 
 ### Proxy / X-Accel
 
-| Field | Default | Env Var | Description |
-|-------|---------|---------|-------------|
-| `proxy.x_accel_redirect_prefix` | *(empty)* | `DEDUP_PROXY_X_ACCEL_REDIRECT_PREFIX` | Nginx internal location prefix |
-| `proxy.upstream_url` | *(empty)* | `DEDUP_PROXY_UPSTREAM_URL` | Backend URL for reverse proxy mode |
+| Field | Default | Description |
+|-------|---------|-------------|
+| `proxy.x_accel_redirect_prefix` | *(empty)* | Nginx internal location prefix (e.g. `/internal/upstream`) |
+| `proxy.upstream_url` | *(empty)* | Backend URL for reverse proxy mode (e.g. `http://backend:9000`) |
 
 ### Performance
 
-| Field | Default | Env Var | Description |
-|-------|---------|---------|-------------|
-| `performance.local_cache` | `true` | `DEDUP_PERFORMANCE_LOCAL_CACHE` | Enable L1 in-process cache |
-| `performance.gogc` | `200` | `DEDUP_PERFORMANCE_GOGC` | Go garbage collector target percentage |
-| `performance.store_timeout` | `500ms` | `DEDUP_PERFORMANCE_STORE_TIMEOUT` | Context deadline for store operations |
+| Field | Default | Description |
+|-------|---------|-------------|
+| `performance.local_cache` | `true` | Enable L1 in-process cache |
+| `performance.gogc` | `200` | Go garbage collector target percentage |
+| `performance.store_timeout` | `500ms` | Context deadline for store operations |
+
+### Example config.json
+
+```json
+{
+  "server": { "listen_addr": ":8081", "log_level": "info", "shutdown_timeout": "10s" },
+  "redis": { "addr": "localhost:6379", "pool_size": 100 },
+  "dedup": { "window": "10s", "max_body_bytes": 65536, "fail_open": true },
+  "proxy": { "x_accel_redirect_prefix": "/internal/upstream" },
+  "performance": { "local_cache": true, "gogc": 200, "store_timeout": "500ms" }
+}
+```
 
 ### Window Sizing Guide
 
@@ -500,7 +517,7 @@ dedup-service/
 │   └── main.go                    # Entrypoint, router, graceful shutdown
 ├── internal/
 │   ├── config/
-│   │   ├── config.go              # Viper JSON config + env overrides + validation
+│   │   ├── config.go              # Viper JSON config (no env overrides) + validation
 │   │   └── config_test.go         # Defaults, override, validation tests
 │   ├── fingerprint/
 │   │   ├── fingerprint.go         # SHA-256 fingerprint with pooling
@@ -560,7 +577,7 @@ dedup-service/
 
 ```
 main() → run()
-  1. config.Load()                    ← JSON + env vars + validation
+  1. config.Load()                    ← JSON config only + validation
   2. zerolog + lumberjack setup       ← structured logging + file rotation
   3. GOGC tuning                      ← runtime/debug.SetGCPercent(cfg.GOGC)
   4. store.NewRedis(cfg)              ← connects to Redis, validates with Ping
@@ -719,18 +736,17 @@ func (fp *Request) Hash() string {
 # 1. Start Redis
 docker run -d --name redis-test -p 6379:6379 redis:7-alpine
 
-# 2. Start the service (sidecar mode)
+# 2. Start the service (uses config.json — sidecar mode by default)
 go run ./cmd/server
 
-# 3. Start the service (X-Accel mode — recommended)
-MSYS_NO_PATHCONV=1 DEDUP_PROXY_X_ACCEL_REDIRECT_PREFIX=/internal/upstream go run ./cmd/server
+# 3. To use X-Accel mode, edit config.json:
+#    "proxy": { "x_accel_redirect_prefix": "/internal/upstream" }
+#    Then restart the service.
 
 # 4. Test
 curl -s http://localhost:8081/healthz
 curl -X POST -H "Content-Type: application/json" -d '{"id":"test"}' http://localhost:8081/dedup-check
 ```
-
-> **Windows/Git Bash note**: Use `MSYS_NO_PATHCONV=1` when setting `DEDUP_PROXY_X_ACCEL_REDIRECT_PREFIX` to prevent MSYS from converting `/internal/upstream` to a Windows path.
 
 ### With Nginx (Full E2E)
 
@@ -746,8 +762,10 @@ docker run -d --name nginx-dedup -p 8080:80 \
   -v "$(pwd)/nginx/test.conf:/etc/nginx/conf.d/default.conf:ro" \
   nginx:1.27-alpine
 
-# 4. Start dedup service in X-Accel mode
-MSYS_NO_PATHCONV=1 DEDUP_PROXY_X_ACCEL_REDIRECT_PREFIX=/internal/upstream go run ./cmd/server
+# 4. Set X-Accel mode in config.json:
+#    "proxy": { "x_accel_redirect_prefix": "/internal/upstream" }
+#    Then start the service:
+go run ./cmd/server
 
 # 5. Test through Nginx
 curl -X POST -H "Content-Type: application/json" \
@@ -784,15 +802,32 @@ Multi-stage build:
 
 ### Kubernetes
 
-Set environment variables via ConfigMap/Secret:
+Mount an appropriate `config.json` via ConfigMap:
 ```yaml
-env:
-  - name: DEDUP_REDIS_ADDR
-    value: "redis-master.redis:6379"
-  - name: DEDUP_PROXY_X_ACCEL_REDIRECT_PREFIX
-    value: "/internal/upstream"
-  - name: DEDUP_FAIL_OPEN
-    value: "true"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dedup-config
+data:
+  config.json: |
+    {
+      "server": { "listen_addr": ":8081" },
+      "redis": { "addr": "redis-master.redis:6379" },
+      "dedup": { "fail_open": true },
+      "proxy": { "x_accel_redirect_prefix": "/internal/upstream" }
+    }
+```
+
+```yaml
+# In the Deployment spec:
+volumeMounts:
+  - name: config
+    mountPath: /app/config.json
+    subPath: config.json
+volumes:
+  - name: config
+    configMap:
+      name: dedup-config
 ```
 
 ---
@@ -874,11 +909,11 @@ Runs functional tests first (aborts on failure), then load tests.
 
 **Symptom**: X-Accel-Redirect header contains `C:/Program Files/Git/internal/upstream/...` instead of `/internal/upstream/...`.
 
-**Cause**: Git Bash (MSYS) converts environment variables that look like Unix paths to Windows paths.
+**Cause**: Git Bash (MSYS) was converting environment variables that look like Unix paths to Windows paths. This was relevant when the service used env var overrides.
 
-**Fix**: Prefix the command with `MSYS_NO_PATHCONV=1`:
-```bash
-MSYS_NO_PATHCONV=1 DEDUP_PROXY_X_ACCEL_REDIRECT_PREFIX=/internal/upstream go run ./cmd/server
+**Current status**: No longer an issue. Config is now read exclusively from `config.json`, which is not subject to MSYS path conversion. Simply set the prefix in your JSON file:
+```json
+{ "proxy": { "x_accel_redirect_prefix": "/internal/upstream" } }
 ```
 
 ### 503 on /healthz Under Load
@@ -911,7 +946,7 @@ MSYS_NO_PATHCONV=1 DEDUP_PROXY_X_ACCEL_REDIRECT_PREFIX=/internal/upstream go run
 **Checklist**:
 1. Does the Nginx config have `location /internal/upstream { internal; ... }`?
 2. Does the `rewrite` strip the prefix correctly?
-3. Is the dedup service env var set: `DEDUP_PROXY_X_ACCEL_REDIRECT_PREFIX=/internal/upstream`?
+3. Is the dedup service `config.json` set: `"proxy": { "x_accel_redirect_prefix": "/internal/upstream" }`?
 4. Does the Nginx upstream point to the correct backend address?
 
 ---
@@ -944,7 +979,58 @@ SHA-256 provides collision resistance. With millions of requests per day, even a
 
 ### Why Body is Capped at 64 KB?
 
-Most API request bodies are under 10 KB. Reading beyond 64 KB provides diminishing returns for fingerprint uniqueness while increasing memory pressure and latency. The cap is configurable via `DEDUP_MAX_BODY_BYTES`.
+Most API request bodies are under 10 KB. Reading beyond 64 KB provides diminishing returns for fingerprint uniqueness while increasing memory pressure and latency. The cap is configurable via `dedup.max_body_bytes` in config.json.
+
+---
+
+## 22. X-Accel-Redirect — How It Works Under the Hood
+
+This section answers common questions about the X-Accel-Redirect mechanism.
+
+### What is X-Accel-Redirect?
+
+`X-Accel-Redirect` is **not** an Nginx configuration directive — it's a **response header** that backends send to Nginx. Nginx automatically recognizes this header in any `proxy_pass` response and performs an internal redirect. No special config is needed to enable it; the `internal;` directive on the target `location` block simply restricts it from being accessed directly by clients.
+
+### Who reads the `proxy.x_accel_redirect_prefix` config?
+
+Only the **Go dedup service** reads this config value. Nginx never reads it. The service uses it to construct the `X-Accel-Redirect` response header:
+
+```
+X-Accel-Redirect: <prefix> + <original_URI>
+                  /internal/upstream + /api/orders
+```
+
+The Nginx config has a matching `location /internal/upstream { internal; ... }` block hardcoded. **The prefix value in config.json must match the Nginx location block** — if you change one, you must change the other.
+
+### Why does the dedup service send the URI back to Nginx?
+
+Nginx treats `proxy_pass` and the X-Accel internal redirect as **two independent steps**. When Nginx proxies to the dedup service, that subrequest is complete once it gets a response. The internal redirect to `/internal/upstream` is a brand new internal request — Nginx does not automatically carry over the original URI.
+
+The `X-Accel-Redirect` header value *is* the URI for that new internal request. This is by design: the backend can tell Nginx where to redirect, potentially to a different path than the original.
+
+### Is the original request body preserved?
+
+Yes. Nginx buffers the client's request body internally and reuses it for the X-Accel internal redirect. The body flows through:
+
+```
+Client sends body → Nginx buffers it (client_body_buffer_size 64k)
+  → proxy_pass to dedup service (body sent; dedup reads it for fingerprinting)
+  → dedup returns 200 + X-Accel-Redirect header (no body in response)
+  → Nginx internal redirect to /internal/upstream
+  → proxy_pass to backend (same buffered body sent again)
+```
+
+The dedup service reads the body to compute the fingerprint but doesn't alter it from Nginx's perspective — Nginx has its own buffered copy.
+
+### X-Accel vs Reverse Proxy: URI handling
+
+| Aspect | X-Accel-Redirect | Reverse Proxy |
+|--------|------------------|---------------|
+| URI resolution | Dynamic — any URI from the client | Client URI preserved, host fixed |
+| Destination | Nginx routes via `location` blocks | Single upstream URL in config |
+| Multi-backend routing | Yes (configure in Nginx) | No (one fixed upstream) |
+| Nginx required | Yes | No |
+| Body available | Yes | Yes |
 
 ---
 
