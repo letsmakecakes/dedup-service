@@ -1,6 +1,6 @@
 """Minimal mock backend that responds with JSON for E2E testing."""
 import json
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 class Handler(BaseHTTPRequestHandler):
     def do_ANY(self):
@@ -22,6 +22,6 @@ class Handler(BaseHTTPRequestHandler):
         print(f"[mock] {fmt % args}")
 
 if __name__ == "__main__":
-    srv = HTTPServer(("0.0.0.0", 9000), Handler)
+    srv = ThreadingHTTPServer(("0.0.0.0", 9000), Handler)
     print("mock backend listening on :9000")
     srv.serve_forever()
