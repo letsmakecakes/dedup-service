@@ -29,6 +29,7 @@
 20. [Troubleshooting](#20-troubleshooting)
 21. [Design Decisions & Trade-offs](#21-design-decisions--trade-offs)
 22. [X-Accel-Redirect — How It Works Under the Hood](#22-x-accel-redirect--how-it-works-under-the-hood)
+23. [Capacity Planning & Redis Sizing](#23-capacity-planning--redis-sizing)
 
 ---
 
@@ -305,10 +306,10 @@ Two config files are provided:
 
 | Use Case | Recommended Window |
 |----------|-------------------|
-| Payment processing | 10–30s |
-| General API dedup | 5–15s |
-| Fast / idempotent APIs | 2–5s |
-| Background jobs / batch | 60–300s |
+| Payment processing | 5–10m |
+| General API dedup | 1–5m |
+| Fast / idempotent APIs | 10–60s |
+| Background jobs / batch | 5–30m |
 
 ---
 
@@ -1049,6 +1050,135 @@ The dedup service reads the body to compute the fingerprint but doesn't alter it
 | Multi-backend routing | Yes (configure in Nginx) | No (one fixed upstream) |
 | Nginx required | Yes | No |
 | Body available | Yes | Yes |
+
+### How does Nginx send the whole request to the dedup service?
+
+Through `proxy_pass` with its default settings. `proxy_pass` forwards **everything** by default:
+- **Method**: The original HTTP method (POST, PUT, DELETE, etc.)
+- **URI**: The full path + query string
+- **Headers**: All client headers (Host, Content-Type, Authorization, etc.)
+- **Body**: The entire request body (`proxy_pass_request_body` defaults to `on`)
+
+Nginx first buffers the body in memory (up to `client_body_buffer_size 64k`) or spills to disk for larger bodies. Then it opens a connection to the dedup service and sends the full HTTP request. From the dedup service's perspective, the request looks identical to what the client sent. This is standard HTTP reverse proxying — there's no special mechanism.
+
+### What happens after Nginx receives the X-Accel-Redirect header?
+
+1. **Nginx intercepts the response** — it does NOT send the dedup service's 200 response to the client. The `X-Accel-Redirect` header is consumed internally and never reaches the client.
+2. **Nginx starts a new internal request** to the path in the header (e.g. `/internal/upstream/api/orders`). This is not an HTTP redirect — it happens entirely inside Nginx.
+3. **Nginx matches the path** against `location /internal/upstream { internal; ... }`:
+   - `rewrite` strips the prefix → `/api/orders`
+   - `proxy_method $original_method` restores the original method
+4. **Nginx forwards to the backend** with the original method, stripped URI, buffered body, and client headers.
+5. **Backend responds** → Nginx sends that response directly to the client.
+
+The client sees only the backend's response — it never knows the dedup service existed.
+
+### How is the HTTP method preserved? What about DELETE, PUT, etc.?
+
+X-Accel-Redirect changes the method to GET (Nginx's default for internal redirects). The config handles this with a two-step approach:
+
+1. **Before proxy_pass** (in `location /`):
+   ```nginx
+   set $original_method $request_method;  # saves POST, DELETE, PUT, PATCH, etc.
+   ```
+2. **After X-Accel-Redirect** (in `location /internal/upstream`):
+   ```nginx
+   proxy_method $original_method;  # restores the saved method
+   ```
+
+| Client sends | `$original_method` saved as | Backend receives |
+|---|---|---|
+| `POST /api/orders` | `POST` | `POST /api/orders` |
+| `DELETE /api/users/5` | `DELETE` | `DELETE /api/users/5` |
+| `PUT /api/items/3` | `PUT` | `PUT /api/items/3` |
+| `PATCH /api/config` | `PATCH` | `PATCH /api/config` |
+
+Without `proxy_method $original_method`, every request would arrive at the backend as GET.
+
+---
+
+## 23. Capacity Planning & Redis Sizing
+
+### Traffic Analysis (50 Lakh – 1 Crore requests/day)
+
+| Daily Volume | Avg req/s | Peak (5x burst) |
+|---|---|---|
+| 50 Lakh (5M) | ~58 | ~290 |
+| 1 Crore (10M) | ~116 | ~580 |
+
+### Current Capacity (from load tests on laptop)
+
+| Scenario | Measured req/s |
+|---|---|
+| Duplicate detection (hot path) | 7,500 – 12,000 |
+| Unique payloads (Redis-bound) | ~518 |
+| Nginx E2E | ~1,187 |
+
+A **single instance** handles 1 crore requests/day comfortably. Even worst-case (580 peak req/s, all unique) is within capacity — and production Redis is significantly faster than Docker Desktop Redis on a laptop.
+
+### Redis Memory
+
+With a 5-minute dedup window, only requests within the last 5 minutes exist in Redis:
+
+| Daily Volume | Keys alive (5 min window) | Memory |
+|---|---|---|
+| 50 Lakh (5M) | ~17,360 | ~2.5 MB |
+| 1 Crore (10M) | ~34,720 | ~5 MB |
+| Peak burst (5x) | ~173,600 | ~25 MB |
+
+Redis needs **< 25 MB of working memory** even at peak burst. The smallest instance (e.g. AWS `cache.t3.micro` with 0.5 GB) is more than sufficient.
+
+### Redis CPU
+
+Each request = 1 `SET NX PX` command (~1 µs on Redis). At 580 req/s peak, Redis uses < 0.1% CPU. A single Redis core handles ~100K ops/s.
+
+### L1 Cache Impact (5 min window)
+
+The in-process LocalCache holds 30x more keys than with a 10s window. At ~150 bytes/key, peak is ~26 MB in Go heap — still fine, but GC works slightly harder. The upside: longer window means more L1 cache hits, reducing Redis round-trips and **improving** throughput for duplicate detection.
+
+The LocalCache sweep runs every 10 seconds (hardcoded). With a 5-minute TTL, expired keys sit at most 10s past expiry — negligible overhead.
+
+### Trade-off: Legitimate Retries
+
+A 5-minute window means legitimate retries within 5 minutes are blocked. If a user's first request genuinely fails (e.g. backend returns 500, network timeout), they cannot retry with the same payload for 5 minutes. The dedup service does not distinguish between "backend succeeded" and "backend failed" — it only knows the fingerprint was seen. This is acceptable for use cases like payment idempotency where retries should use a different idempotency key.
+
+### Recommended Production Redis Setup
+
+| Aspect | Recommendation |
+|---|---|
+| **Instance type** | Smallest available (e.g. `cache.t3.micro` or `cache.t4g.micro`) |
+| **Memory** | 0.5 GB is more than enough |
+| **High availability** | Redis with 1 replica (automatic failover) |
+| **Persistence** | **Not needed** — keys expire in 10s; losing them on restart means a brief window where duplicates pass through |
+| **Maxmemory policy** | `volatile-ttl` — evict keys closest to expiry first (all keys have TTL) |
+| **Network** | Same VPC/subnet as the dedup service to minimize latency |
+| **Connection pool** | 50 is enough for 580 peak req/s |
+| **Dedup window** | 5 minutes (`"window": "5m"`) |
+
+### Production Config
+
+```json
+{
+  "redis": {
+    "addr": "redis-primary.your-vpc:6379",
+    "pool_size": 50,
+    "min_idle": 10,
+    "dial_timeout": "2s",
+    "read_timeout": "200ms",
+    "write_timeout": "200ms"
+  },
+  "dedup": {
+    "fail_open": true
+  }
+}
+```
+
+### What NOT to worry about
+
+- **Disk**: No persistence needed, no RDB/AOF
+- **Cluster mode**: Single node handles this load trivially
+- **Scaling**: ~100x current traffic before Redis becomes a concern
+- **Key eviction**: All keys auto-expire via TTL, no memory growth risk
 
 ---
 
