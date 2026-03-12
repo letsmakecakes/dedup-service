@@ -22,7 +22,7 @@
     "min_idle": 20
   },
   "dedup": {
-    "window": "10s",
+    "window": "5m",
     "max_body_bytes": 65536,
     "fail_open": true,
     "exclude_methods": ["GET", "HEAD", "OPTIONS"]
