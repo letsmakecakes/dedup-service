@@ -35,6 +35,9 @@ func TestLoadDefaults(t *testing.T) {
 	if !cfg.FailOpen {
 		t.Error("expected FailOpen=true by default")
 	}
+	if cfg.XAccelRedirectPrefix != "/internal/upstream" {
+		t.Errorf("expected default XAccelRedirectPrefix /internal/upstream, got %s", cfg.XAccelRedirectPrefix)
+	}
 }
 
 func TestIsMethodExcluded(t *testing.T) {

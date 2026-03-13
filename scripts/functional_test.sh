@@ -15,6 +15,8 @@
 set -euo pipefail
 
 BASE_URL="${BASE_URL:-http://localhost:8081}"
+TEST_PATH="${TEST_PATH:-/api/orders}"
+RUN_ID="${RUN_ID:-$(date +%s)}"
 PASS=0
 FAIL=0
 TOTAL=0
@@ -50,6 +52,18 @@ assert_json_field() {
     fi
 }
 
+assert_header_present() {
+    local description="$1" value="$2"
+    TOTAL=$((TOTAL + 1))
+    if [ -n "$value" ]; then
+        PASS=$((PASS + 1))
+        echo "  $(green PASS)  $description"
+    else
+        FAIL=$((FAIL + 1))
+        echo "  $(red FAIL)  $description (header missing)"
+    fi
+}
+
 separator() {
     echo ""
     echo "$(bold "─── $1 ───")"
@@ -77,15 +91,19 @@ assert_status "GET /healthz returns 200" 200 "$status"
 body=$(curl -s "$BASE_URL/healthz")
 assert_json_field "Response contains status=ok" "$body" "status" "ok"
 
-# ── 2. First request is allowed ──────────────────────────────────────
+# ── 2. First request is allowed and redirected ───────────────────────
 
 echo ""
-echo "$(bold '2. First Request Allowed')"
-status=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+echo "$(bold '2. First Request Allowed (X-Accel Header Present)')"
+response_headers=$(mktemp)
+status=$(curl -s -D "$response_headers" -o /dev/null -w "%{http_code}" -X POST \
     -H "Content-Type: application/json" \
-    -d '{"id":"test-1","amount":100}' \
-    "$BASE_URL/dedup-check")
+    -d "{\"id\":\"test-1-${RUN_ID}\",\"amount\":100}" \
+    "$BASE_URL$TEST_PATH")
 assert_status "First POST is allowed (200)" 200 "$status"
+redirect=$(grep -i '^X-Accel-Redirect:' "$response_headers" | head -1 | cut -d':' -f2- | tr -d '\r' | sed 's/^ *//')
+assert_header_present "X-Accel-Redirect header is present" "$redirect"
+rm -f "$response_headers"
 
 # ── 3. Duplicate request is rejected ─────────────────────────────────
 
@@ -93,8 +111,8 @@ echo ""
 echo "$(bold '3. Duplicate Request Rejected')"
 response=$(curl -s -w "\n%{http_code}" -X POST \
     -H "Content-Type: application/json" \
-    -d '{"id":"test-1","amount":100}' \
-    "$BASE_URL/dedup-check")
+    -d "{\"id\":\"test-1-${RUN_ID}\",\"amount\":100}" \
+    "$BASE_URL$TEST_PATH")
 body=$(echo "$response" | head -1)
 status=$(echo "$response" | tail -1)
 assert_status "Same POST is rejected (409)" 409 "$status"
@@ -106,8 +124,8 @@ echo ""
 echo "$(bold '4. Different Body Allowed')"
 status=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
     -H "Content-Type: application/json" \
-    -d '{"id":"test-2","amount":200}' \
-    "$BASE_URL/dedup-check")
+    -d "{\"id\":\"test-2-${RUN_ID}\",\"amount\":200}" \
+    "$BASE_URL$TEST_PATH")
 assert_status "Different body is allowed (200)" 200 "$status"
 
 # ── 5. Different URI is allowed ──────────────────────────────────────
@@ -116,25 +134,26 @@ echo ""
 echo "$(bold '5. Different URI Allowed')"
 status=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
     -H "Content-Type: application/json" \
-    -d '{"id":"test-1","amount":100}' \
-    "$BASE_URL/dedup-check?ref=different")
+    -d "{\"id\":\"test-1-${RUN_ID}\",\"amount\":100}" \
+    "$BASE_URL$TEST_PATH?ref=different")
 assert_status "Same body, different query param is allowed (200)" 200 "$status"
 
-# ── 6. Non-POST methods return 404 ───────────────────────────────────
+# ── 6. Non-dedup methods are allowed and redirected ──────────────────
 
 echo ""
-echo "$(bold '6. Non-POST/GET Methods Return 404 (Router-Level Rejection)')"
-for method in PUT DELETE PATCH; do
-    status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 -X "$method" "$BASE_URL/dedup-check")
-    assert_status "$method /dedup-check returns 404" 404 "$status"
+echo "$(bold '6. Excluded Methods Are Allowed (X-Accel)')"
+for method in GET HEAD OPTIONS; do
+    response_headers=$(mktemp)
+    if [ "$method" = "HEAD" ]; then
+        status=$(curl -s -I -D "$response_headers" -o /dev/null -w "%{http_code}" --max-time 3 "$BASE_URL$TEST_PATH")
+    else
+        status=$(curl -s -D "$response_headers" -o /dev/null -w "%{http_code}" --max-time 3 -X "$method" "$BASE_URL$TEST_PATH")
+    fi
+    assert_status "$method $TEST_PATH returns 200" 200 "$status"
+    redirect=$(grep -i '^X-Accel-Redirect:' "$response_headers" | head -1 | cut -d':' -f2- | tr -d '\r' | sed 's/^ *//')
+    assert_header_present "$method $TEST_PATH has X-Accel-Redirect" "$redirect"
+    rm -f "$response_headers"
 done
-
-# GET /dedup-check is registered for Nginx auth_request sub-requests.
-# Without X-Original-Method, the method stays GET (excluded) → 200.
-status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 -X GET "$BASE_URL/dedup-check")
-assert_status "GET /dedup-check returns 200 (auth_request route)" 200 "$status"
-
-# ── 7. Different auth headers still deduplicated ─────────────────────
 
 echo ""
 echo "$(bold '7. Auth Headers Ignored (Same Body = Duplicate)')"
@@ -142,18 +161,18 @@ flush_redis
 status=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer userA" \
-    -d '{"id":"auth-test","amount":500}' \
-    "$BASE_URL/dedup-check")
+    -d "{\"id\":\"auth-test-${RUN_ID}\",\"amount\":500}" \
+    "$BASE_URL$TEST_PATH")
 assert_status "First POST with Bearer userA (200)" 200 "$status"
 
 status=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer userB" \
-    -d '{"id":"auth-test","amount":500}' \
-    "$BASE_URL/dedup-check")
+    -d "{\"id\":\"auth-test-${RUN_ID}\",\"amount\":500}" \
+    "$BASE_URL$TEST_PATH")
 assert_status "Same body with Bearer userB is duplicate (409)" 409 "$status"
 
-# ── 8. Metrics endpoint ──────────────────────────────────────────────
+# ── 8. Prometheus Metrics ─────────────────────────────────────────────
 
 echo ""
 echo "$(bold '8. Prometheus Metrics')"
@@ -177,12 +196,16 @@ echo "$(bold '9. pprof Endpoint')"
 status=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/debug/pprof/heap")
 assert_status "GET /debug/pprof/heap returns 200" 200 "$status"
 
-# ── 10. 404 for unknown routes ───────────────────────────────────────
+# ── 10. Unknown route is handled by X-Accel handler ──────────────────
 
 echo ""
-echo "$(bold '10. Unknown Route Returns 404')"
-status=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/nonexistent")
-assert_status "GET /nonexistent returns 404" 404 "$status"
+echo "$(bold '10. Unknown Route Is Allowed for Upstream Forwarding')"
+response_headers=$(mktemp)
+status=$(curl -s -D "$response_headers" -o /dev/null -w "%{http_code}" "$BASE_URL/nonexistent")
+assert_status "GET /nonexistent returns 200" 200 "$status"
+redirect=$(grep -i '^X-Accel-Redirect:' "$response_headers" | head -1 | cut -d':' -f2- | tr -d '\r' | sed 's/^ *//')
+assert_header_present "Unknown route includes X-Accel-Redirect" "$redirect"
+rm -f "$response_headers"
 
 # ── Summary ──────────────────────────────────────────────────────────
 

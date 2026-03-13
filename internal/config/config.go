@@ -44,12 +44,6 @@ type Config struct {
 	// excludeSet is an O(1) lookup table built from ExcludeMethods.
 	excludeSet map[string]struct{}
 
-	// ── Proxy mode ───────────────────────────────────────────────────────────
-	UpstreamURL string // Backend URL for reverse-proxy mode (e.g. "http://localhost:9000").
-	// When set, the service acts as a reverse proxy: requests pass
-	// through dedup and allowed ones are forwarded to the upstream.
-	// When empty, the service operates in sidecar/auth_request mode.
-
 	// ── X-Accel-Redirect mode ────────────────────────────────────────────────
 	XAccelRedirectPrefix string // Internal Nginx location prefix (e.g. "/internal/upstream").
 	// When set, the service returns X-Accel-Redirect headers for
@@ -97,8 +91,7 @@ func Load(configPath ...string) (*Config, error) {
 	v.SetDefault("dedup.fail_open", true)
 	v.SetDefault("dedup.exclude_methods", []string{"GET", "HEAD", "OPTIONS"})
 
-	v.SetDefault("proxy.upstream_url", "")
-	v.SetDefault("proxy.x_accel_redirect_prefix", "")
+	v.SetDefault("proxy.x_accel_redirect_prefix", "/internal/upstream")
 
 	// ── Read JSON config file ─────────────────────────────────────────────────
 	if len(configPath) > 0 && configPath[0] != "" {
@@ -181,7 +174,6 @@ func Load(configPath ...string) (*Config, error) {
 		FailOpen:       v.GetBool("dedup.fail_open"),
 		ExcludeMethods: methods,
 
-		UpstreamURL:          v.GetString("proxy.upstream_url"),
 		XAccelRedirectPrefix: v.GetString("proxy.x_accel_redirect_prefix"),
 
 		LocalCacheEnabled: v.GetBool("performance.local_cache"),
@@ -237,6 +229,9 @@ func (c *Config) validate() error {
 	}
 	if c.StoreTimeout <= 0 {
 		return fmt.Errorf("performance.store_timeout must be positive, got %s", c.StoreTimeout)
+	}
+	if strings.TrimSpace(c.XAccelRedirectPrefix) == "" {
+		return fmt.Errorf("proxy.x_accel_redirect_prefix must not be empty")
 	}
 	return nil
 }

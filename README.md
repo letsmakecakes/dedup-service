@@ -1,6 +1,6 @@
 # dedup-service
 
-Request deduplication sidecar for the Nginx API Gateway, written in Go.
+Request deduplication service for the Nginx API Gateway, written in Go.
 
 Prevents duplicate HTTP requests from reaching upstream services by fingerprinting each request and storing the fingerprint in Redis with a configurable TTL. Duplicate requests within the window receive `409 Conflict`.
 
@@ -55,12 +55,9 @@ dedup-service/
 │   │   ├── fingerprint.go              # SHA-256 fingerprint computation
 │   │   └── fingerprint_test.go         # Determinism, per-field uniqueness, no-IP tests
 │   ├── handler/
-│   │   ├── handler.go                  # /dedup-check and /healthz Gin handlers (legacy sidecar)
+│   │   ├── health.go                   # /healthz handler + shared response payloads
 │   │   ├── xaccel.go                   # X-Accel-Redirect handler (body-based dedup)
-│   │   ├── proxy.go                    # Reverse-proxy handler (Go proxies to upstream)
-│   │   ├── handler_test.go             # Legacy sidecar handler tests
 │   │   ├── xaccel_test.go              # X-Accel-Redirect handler tests
-│   │   └── proxy_test.go               # Reverse-proxy handler tests
 │   ├── metrics/
 │   │   └── metrics.go                  # Prometheus counters and histograms
 │   ├── middleware/
@@ -82,7 +79,7 @@ dedup-service/
 
 - Go 1.22+
 - Redis 7+
-- Nginx (standard build — no auth_request module required)
+- Nginx
 
 ### Run locally
 
@@ -184,8 +181,7 @@ cp config.json config.json.bak   # backup before editing
 | `dedup.max_body_bytes` | `65536` | Max body bytes hashed (64 KB) |
 | `dedup.fail_open` | `true` | Allow requests if Redis is down |
 | `dedup.exclude_methods` | `["GET","HEAD","OPTIONS"]` | Methods that bypass dedup |
-| `proxy.x_accel_redirect_prefix` | _(empty)_ | Nginx internal location prefix (e.g. `/internal/upstream`). Enables X-Accel-Redirect mode with body-based dedup. |
-| `proxy.upstream_url` | _(empty)_ | Upstream URL for reverse-proxy mode (Go proxies directly). |
+| `proxy.x_accel_redirect_prefix` | `/internal/upstream` | Nginx internal location prefix used for X-Accel-Redirect forwarding. |
 | `performance.local_cache` | `true` | L1 in-process cache for duplicates |
 | `performance.gogc` | `0` (Go default) | Go GC target percentage |
 | `performance.store_timeout` | `500ms` | Context deadline for Redis calls |
@@ -208,10 +204,9 @@ sudo cp nginx/dedup.conf /etc/nginx/conf.d/dedup.conf
 sudo nginx -t && sudo nginx -s reload
 ```
 
-Start the dedup service in X-Accel-Redirect mode:
+Run the dedup service (X-Accel-Redirect mode is always enabled):
 
 ```bash
-export DEDUP_PROXY_X_ACCEL_REDIRECT_PREFIX=/internal/upstream
 ./bin/dedup-service
 ```
 
@@ -222,13 +217,13 @@ How it works:
 3. Nginx internally redirects allowed requests to the `/internal/upstream` location, which proxies to the real backend.
 4. The original HTTP method and request body are preserved across the internal redirect.
 
-### Operating Modes
+### Operating Mode
+
+The service runs in X-Accel-Redirect mode only:
 
 | Mode | Config | Body in fingerprint? | Who forwards to upstream? |
 |---|---|---|---|
-| **X-Accel-Redirect** (recommended) | `proxy.x_accel_redirect_prefix` | Yes | Nginx |
-| **Reverse proxy** | `proxy.upstream_url` | Yes | Go service |
-| **Legacy sidecar** (auth_request) | _(both empty)_ | No (auth_request limitation) | Nginx |
+| **X-Accel-Redirect** | `proxy.x_accel_redirect_prefix` | Yes | Nginx |
 
 ---
 
@@ -245,15 +240,7 @@ location /api/public/ {
 }
 ```
 
-**2. Use a session/device header:**
-```bash
-# In .env
-DEDUP_SESSION_HEADER=X-Device-ID
-```
-```nginx
-# In dedup.conf, inside /internal/dedup-check
-proxy_set_header X-Device-ID $http_x_device_id;
-```
+**2. Include a caller/resource discriminator in the request payload** (for example tenant ID or account ID) so fingerprints differ intentionally.
 
 **3. Accept global scope** — appropriate if the route is naturally idempotent or the body is always unique.
 
@@ -264,7 +251,6 @@ proxy_set_header X-Device-ID $http_x_device_id;
 | Endpoint | Method | Called by | Normal response |
 |---|---|---|---|
 | `/*` (catch-all) | Any | Nginx `proxy_pass` (X-Accel mode) | `200` + `X-Accel-Redirect` (allow) or `409` (duplicate) |
-| `/dedup-check` | `POST` | Nginx `auth_request` (legacy mode) | `200` (allow) or `403`→`409` (duplicate) |
 | `/healthz` | `GET` | Load balancer / K8s probe | `200` (Redis reachable) or `503` |
 | `/metrics` | `GET` | Prometheus scraper | Prometheus text exposition format |
 
@@ -322,7 +308,7 @@ Grafana ships with a pre-provisioned **Dedup Service** dashboard containing:
 | **Deduplication** | Dedup Outcomes (allowed/duplicate/error/excluded), Duplicate Rate gauge, L1 Cache Hit Rate gauge |
 | **Redis / Store** | Store Latency (p50/p95/p99), L1 Cache Hits vs Misses |
 | **HTTP Status Codes** | Status Code Distribution, Error Rate (5xx) |
-| **Latency by Endpoint** | /dedup-check Latency, /healthz Latency |
+| **Latency by Endpoint** | /api/* Latency, /healthz Latency |
 
 Default credentials: `admin` / `admin`
 

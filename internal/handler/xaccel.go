@@ -16,7 +16,7 @@ import (
 	"github.com/yourorg/dedup-service/internal/store"
 )
 
-// XAccelDedupHandler handles requests in X-Accel-Redirect sidecar mode.
+// XAccelDedupHandler handles requests in X-Accel-Redirect mode.
 //
 // Nginx sends the full client request (including body) to this handler.
 // The handler fingerprints method + URI + body, checks Redis, and returns:
@@ -24,8 +24,7 @@ import (
 //     real upstream (method and body are preserved across the redirect).
 //   - 409 Conflict → Nginx returns the duplicate error to the client.
 //
-// This avoids the auth_request body limitation while keeping Nginx as the
-// router that forwards to target services.
+// Nginx remains the router and forwards to target services via internal redirect.
 type XAccelDedupHandler struct {
 	cfg            *config.Config
 	store          store.Store
@@ -126,6 +125,7 @@ func (h *XAccelDedupHandler) Handle(c *gin.Context) {
 // real upstream backend via an internal redirect.
 func (h *XAccelDedupHandler) allow(c *gin.Context) {
 	c.Header("X-Accel-Redirect", h.redirectPrefix+c.Request.RequestURI)
+	c.Header("Content-Length", "0")
 	c.Status(http.StatusOK)
 }
 

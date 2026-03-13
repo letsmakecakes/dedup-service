@@ -1,8 +1,7 @@
-// Command server is the deduplication sidecar for the Nginx API Gateway.
+// Command server is the deduplication service for the Nginx API Gateway.
 //
 // It exposes the following endpoints:
 //
-//	POST /dedup-check   — Nginx auth_request target; returns 200 (allow) or 409 (duplicate)
 //	GET  /healthz       — liveness/readiness; returns 200 when Redis is reachable
 //	GET  /metrics       — Prometheus metrics endpoint
 //
@@ -17,7 +16,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/pprof"
-	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -128,37 +126,14 @@ func run() error {
 	router.GET("/healthz", healthH.Handle)
 	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
-	if cfg.XAccelRedirectPrefix != "" {
-		// ── X-Accel-Redirect mode: Nginx sends full request (with body);
-		//    service returns X-Accel-Redirect for allowed, 409 for duplicate.
-		//    Nginx then internally redirects allowed requests to the upstream.
-		xaccelH := handler.NewXAccelDedup(cfg, dedupStore, logger, cfg.XAccelRedirectPrefix)
-		logger.Info().
-			Str("redirect_prefix", cfg.XAccelRedirectPrefix).
-			Msg("X-Accel-Redirect mode enabled (body-based dedup, Nginx forwards)")
-		router.NoRoute(xaccelH.Handle)
-	} else if cfg.UpstreamURL != "" {
-		// ── Proxy mode: service acts as a reverse proxy with body-based dedup ─
-		upstream, err := url.Parse(cfg.UpstreamURL)
-		if err != nil {
-			return fmt.Errorf("invalid proxy.upstream_url %q: %w", cfg.UpstreamURL, err)
-		}
-		proxyH := handler.NewProxyDedup(cfg, dedupStore, logger, upstream)
-		logger.Info().Str("upstream", cfg.UpstreamURL).Msg("proxy mode enabled (body-based dedup)")
-		router.NoRoute(proxyH.Handle)
-	} else {
-		// ── Sidecar mode: Nginx auth_request calls /dedup-check ──────────────
-		dedupH := handler.NewDedup(cfg, dedupStore, logger)
-		router.POST("/dedup-check", dedupH.Handle)
-		router.GET("/dedup-check", dedupH.Handle) // Nginx auth_request sends GET sub-requests
-		router.NoRoute(middleware.NotFound())
-
-		// Mock backend for integration testing with Nginx.
-		router.Any("/mock", func(c *gin.Context) {
-			c.Data(http.StatusOK, "application/json; charset=utf-8",
-				[]byte(`{"status":"ok","source":"upstream"}`))
-		})
-	}
+	// ── X-Accel-Redirect mode only: Nginx sends full request (with body);
+	//    service returns X-Accel-Redirect for allowed, 409 for duplicate.
+	//    Nginx then internally redirects allowed requests to the upstream.
+	xaccelH := handler.NewXAccelDedup(cfg, dedupStore, logger, cfg.XAccelRedirectPrefix)
+	logger.Info().
+		Str("redirect_prefix", cfg.XAccelRedirectPrefix).
+		Msg("X-Accel-Redirect mode enabled (body-based dedup, Nginx forwards)")
+	router.NoRoute(xaccelH.Handle)
 
 	// pprof endpoints for runtime profiling (CPU, memory, goroutines, etc.).
 	pprofGroup := router.Group("/debug/pprof")

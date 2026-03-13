@@ -72,20 +72,20 @@ echo ""
 hey -n "$LOAD_N" -c "$LOAD_C" "$BASE_URL/healthz" 2>&1 | grep -E "Requests/sec|Fastest|Slowest|Average|Total:|Status code|10%|50%|90%|95%|99%"
 echo ""
 
-# ── Load test 2: POST /dedup-check (duplicate bodies → 409) ─────────
+# ── Load test 2: POST /api/orders (duplicate bodies → 409) ──────────
 
-echo "$(bold '2. POST /dedup-check (duplicate detection → 409s)')"
+echo "$(bold '2. POST /api/orders (duplicate detection → 409s)')"
 echo ""
 hey -n "$LOAD_N" -c "$LOAD_C" \
     -m POST \
     -H "Content-Type: application/json" \
     -d '{"id":"loadtest-dup","data":"same-payload"}' \
-    "$BASE_URL/dedup-check" 2>&1 | grep -E "Requests/sec|Fastest|Slowest|Average|Total:|Status code|10%|50%|90%|95%|99%"
+	"$BASE_URL/api/orders" 2>&1 | grep -E "Requests/sec|Fastest|Slowest|Average|Total:|Status code|10%|50%|90%|95%|99%"
 echo ""
 
-# ── Load test 3: POST /dedup-check (unique bodies → 200s) ───────────
+# ── Load test 3: POST /api/orders (unique bodies → 200s) ─────────────
 
-echo "$(bold '3. POST /dedup-check (unique payloads → 200s)')"
+echo "$(bold '3. POST /api/orders (unique payloads → 200s)')"
 echo ""
 echo "  Running custom Go load test for unique payloads..."
 echo ""
@@ -108,7 +108,7 @@ import (
 func main() {
 	total := 2000
 	concurrency := 50
-	url := "http://localhost:8081/dedup-check"
+	url := "http://localhost:8081/api/orders"
 
 	if v := os.Getenv("LOAD_N"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
@@ -121,7 +121,7 @@ func main() {
 		}
 	}
 	if v := os.Getenv("BASE_URL"); v != "" {
-		url = v + "/dedup-check"
+		url = v + "/api/orders"
 	}
 
 	var (

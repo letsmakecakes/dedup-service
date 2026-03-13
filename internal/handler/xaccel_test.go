@@ -1,6 +1,7 @@
 package handler_test
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rs/zerolog"
 
 	"github.com/yourorg/dedup-service/internal/config"
 	"github.com/yourorg/dedup-service/internal/handler"
@@ -16,6 +18,33 @@ import (
 )
 
 const testRedirectPrefix = "/internal/upstream"
+
+func init() {
+	gin.SetMode(gin.TestMode)
+}
+
+func silentLogger() zerolog.Logger {
+	return zerolog.New(io.Discard)
+}
+
+func baseCfg() *config.Config {
+	cfg := &config.Config{
+		DedupWindow:    10 * time.Second,
+		MaxBodyBytes:   65536,
+		FailOpen:       true,
+		ExcludeMethods: []string{"GET", "HEAD", "OPTIONS"},
+	}
+	cfg.BuildExcludeSet()
+	return cfg
+}
+
+func assertRespStatus(t *testing.T, resp *http.Response, want int) {
+	t.Helper()
+	if resp.StatusCode != want {
+		body, _ := io.ReadAll(resp.Body)
+		t.Errorf("expected HTTP %d, got %d (body: %s)", want, resp.StatusCode, string(body))
+	}
+}
 
 // serveXAccel runs a request through the XAccelDedupHandler using a real test server.
 func serveXAccel(h *handler.XAccelDedupHandler, method, uri, body string) *http.Response {
@@ -190,5 +219,42 @@ func TestXAccelRedirectPrefixConcatenation(t *testing.T) {
 	want := testRedirectPrefix + "/api/v2/orders?ref=abc"
 	if got := resp.Header.Get("X-Accel-Redirect"); got != want {
 		t.Errorf("expected X-Accel-Redirect %q, got %q", want, got)
+	}
+}
+
+func TestHealthOK(t *testing.T) {
+	h := handler.NewHealth(store.NewMemory(), silentLogger())
+
+	rr := httptest.NewRecorder()
+	router := gin.New()
+	router.GET("/healthz", h.Handle)
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected HTTP %d, got %d", http.StatusOK, rr.Code)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(rr.Body).Decode(&body); err != nil {
+		t.Fatalf("could not decode JSON response: %v", err)
+	}
+	if body["status"] != "ok" {
+		t.Fatalf("expected status=ok, got %v", body["status"])
+	}
+}
+
+func TestHealthUnhealthy(t *testing.T) {
+	s := store.NewMemory()
+	s.Err = store.ErrUnavailable
+	h := handler.NewHealth(s, silentLogger())
+
+	rr := httptest.NewRecorder()
+	router := gin.New()
+	router.GET("/healthz", h.Handle)
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected HTTP %d, got %d", http.StatusServiceUnavailable, rr.Code)
 	}
 }

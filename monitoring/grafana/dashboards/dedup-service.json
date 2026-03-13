@@ -303,21 +303,21 @@
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 37 },
       "id": 10,
       "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
-      "title": "/dedup-check Latency",
+      "title": "/api/orders Latency",
       "type": "timeseries",
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum(rate(dedup_http_request_duration_seconds_bucket{path=\"/dedup-check\"}[1m])) by (le))",
+          "expr": "histogram_quantile(0.50, sum(rate(dedup_http_request_duration_seconds_bucket{path=\"/api/orders\"}[1m])) by (le))",
           "legendFormat": "p50",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.95, sum(rate(dedup_http_request_duration_seconds_bucket{path=\"/dedup-check\"}[1m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(dedup_http_request_duration_seconds_bucket{path=\"/api/orders\"}[1m])) by (le))",
           "legendFormat": "p95",
           "refId": "B"
         },
         {
-          "expr": "histogram_quantile(0.99, sum(rate(dedup_http_request_duration_seconds_bucket{path=\"/dedup-check\"}[1m])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(dedup_http_request_duration_seconds_bucket{path=\"/api/orders\"}[1m])) by (le))",
           "legendFormat": "p99",
           "refId": "C"
         }
