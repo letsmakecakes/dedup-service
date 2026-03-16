@@ -25,6 +25,16 @@ Nginx sends the full client request (method, URI, headers, body) to the dedup se
 - **Allowed** → `200` with `X-Accel-Redirect` header → Nginx internally redirects to the upstream backend (HTTP method and body are preserved).
 - **Duplicate** → `409 Conflict` with JSON body → returned directly to the client.
 
+### Architecture Diagrams
+
+![Dedup Service Architecture](docs/dedup_service_architecture.svg)
+
+![Dedup Service Internals](docs/dedup_service_internals.svg)
+
+![Nginx Role Architecture](docs/nginx_role_architecture.svg)
+
+![Redis Fingerprint Storage](docs/redis_fingerprint_storage.svg)
+
 ### Fingerprint
 
 ```
@@ -47,6 +57,7 @@ SHA-256( Method | URI+Query | Body[:MaxBodyBytes] )
 dedup-service/
 ├── cmd/server/main.go                  # Entrypoint (Gin router), wiring, graceful shutdown
 ├── config.json                         # Default config (loaded by Viper)
+├── docs/                               # Architecture diagrams (SVG)
 ├── internal/
 │   ├── config/
 │   │   ├── config.go                   # Viper-based config from JSON with validation
