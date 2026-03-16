@@ -113,32 +113,119 @@ Error codes:
 | `store_unavailable` | 500 or 503 | Redis/store is unreachable |
 | `internal_error` | 500 | Panic recovered by middleware |
 
-## Quick Examples
+## Curl Command Cases
 
-Allowed request:
+Set a base URL first:
 
 ```bash
-curl -s -D - -o /dev/null -X POST http://localhost:8081/api/orders \
+BASE_URL=http://localhost:8081
+```
+
+### 1. Health check
+
+```bash
+curl -s "$BASE_URL/healthz"
+```
+
+### 2. First request is allowed (200 + X-Accel-Redirect)
+
+```bash
+curl -s -D - -o /dev/null -X POST "$BASE_URL/api/orders" \
   -H "Content-Type: application/json" \
-  -d '{"order_id":12345}'
+  -d '{"id":"case-001","amount":100}'
 ```
 
-Duplicate request:
+### 3. Duplicate request is rejected (409)
 
 ```bash
-curl -s -w "\nHTTP %{http_code}\n" -X POST http://localhost:8081/api/orders \
+# First call seeds the dedup key
+curl -s -o /dev/null -X POST "$BASE_URL/api/orders" \
   -H "Content-Type: application/json" \
-  -d '{"order_id":12345}'
+  -d '{"id":"case-dup","amount":100}'
+
+# Second call is duplicate
+curl -s -w "\nHTTP %{http_code}\n" -X POST "$BASE_URL/api/orders" \
+  -H "Content-Type: application/json" \
+  -d '{"id":"case-dup","amount":100}'
 ```
 
-Health check:
+### 4. Different body is allowed
 
 ```bash
-curl -s http://localhost:8081/healthz
+curl -s -w "\nHTTP %{http_code}\n" -X POST "$BASE_URL/api/orders" \
+  -H "Content-Type: application/json" \
+  -d '{"id":"case-002","amount":200}'
 ```
 
-Metrics:
+### 5. Same body + different URI/query is allowed
 
 ```bash
-curl -s http://localhost:8081/metrics | grep dedup_
+curl -s -w "\nHTTP %{http_code}\n" -X POST "$BASE_URL/api/orders?ref=alt" \
+  -H "Content-Type: application/json" \
+  -d '{"id":"case-dup","amount":100}'
 ```
+
+### 6. Excluded methods are allowed (GET/HEAD/OPTIONS)
+
+```bash
+curl -s -D - -o /dev/null -X GET "$BASE_URL/api/orders"
+curl -s -I "$BASE_URL/api/orders"
+curl -s -D - -o /dev/null -X OPTIONS "$BASE_URL/api/orders"
+```
+
+### 7. Authorization header does not affect dedup key
+
+```bash
+# First request with user A
+curl -s -w "\nHTTP %{http_code}\n" -X POST "$BASE_URL/api/orders" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer userA" \
+  -d '{"id":"case-auth","amount":500}'
+
+# Same body with user B still duplicates
+curl -s -w "\nHTTP %{http_code}\n" -X POST "$BASE_URL/api/orders" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer userB" \
+  -d '{"id":"case-auth","amount":500}'
+```
+
+### 8. Provide custom request ID
+
+```bash
+curl -s -D - -o /dev/null -X POST "$BASE_URL/api/orders" \
+  -H "Content-Type: application/json" \
+  -H "X-Request-ID: req-demo-123" \
+  -d '{"id":"case-rid","amount":700}'
+```
+
+### 9. Metrics endpoint
+
+```bash
+curl -s "$BASE_URL/metrics" | grep dedup_
+```
+
+### 10. pprof endpoint
+
+```bash
+curl -s -o /dev/null -w "HTTP %{http_code}\n" "$BASE_URL/debug/pprof/heap"
+```
+
+### 11. Unknown route is forwarded (still 200 if allowed)
+
+```bash
+curl -s -D - -o /dev/null "$BASE_URL/nonexistent"
+```
+
+### 12. Fail-open vs fail-closed behavior check
+
+```bash
+# Stop Redis, then call endpoint:
+curl -s -w "\nHTTP %{http_code}\n" -X POST "$BASE_URL/api/orders" \
+  -H "Content-Type: application/json" \
+  -d '{"id":"case-store","amount":900}'
+```
+
+Expected:
+
+- `dedup.fail_open=true` -> `200` with `X-Accel-Redirect`
+- `dedup.fail_open=false` -> `500` with `store_unavailable`
