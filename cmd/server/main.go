@@ -121,6 +121,7 @@ func run() error {
 	// Global middleware
 	router.Use(middleware.Recovery(logger))
 	router.Use(middleware.RequestID())
+	router.Use(middleware.HSTS())
 	router.Use(middleware.Logging(logger))
 	router.Use(middleware.Metrics())
 

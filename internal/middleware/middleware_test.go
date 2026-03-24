@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"crypto/tls"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -112,6 +113,41 @@ func TestMetrics_DoesNotPanic(t *testing.T) {
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", rr.Code)
+	}
+}
+
+// ── HSTS ─────────────────────────────────────────────────────────────────────
+
+func TestHSTS_SetsHeaderForTLSRequest(t *testing.T) {
+	router := gin.New()
+	router.Use(HSTS())
+	router.GET("/test", func(c *gin.Context) {
+		c.String(http.StatusOK, "ok")
+	})
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.TLS = &tls.ConnectionState{}
+	router.ServeHTTP(rr, req)
+
+	if got := rr.Header().Get("Strict-Transport-Security"); got != hstsHeaderValue {
+		t.Errorf("expected HSTS header %q, got %q", hstsHeaderValue, got)
+	}
+}
+
+func TestHSTS_DoesNotSetHeaderForHTTPRequest(t *testing.T) {
+	router := gin.New()
+	router.Use(HSTS())
+	router.GET("/test", func(c *gin.Context) {
+		c.String(http.StatusOK, "ok")
+	})
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/test", nil)
+	router.ServeHTTP(rr, req)
+
+	if got := rr.Header().Get("Strict-Transport-Security"); got != "" {
+		t.Errorf("expected no HSTS header on plain HTTP, got %q", got)
 	}
 }
 

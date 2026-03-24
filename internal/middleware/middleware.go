@@ -17,6 +17,9 @@ import (
 // RequestIDHeader is the HTTP header used for request correlation.
 const RequestIDHeader = "X-Request-ID"
 
+// hstsHeaderValue is the default Strict-Transport-Security policy.
+const hstsHeaderValue = "max-age=31536000; includeSubDomains"
+
 // statusText maps commonly seen HTTP status codes to their string form,
 // avoiding a strconv.Itoa allocation on every request.
 var statusText = map[int]string{
@@ -121,6 +124,17 @@ func Metrics() gin.HandlerFunc {
 
 		metrics.RequestsTotal.WithLabelValues(method, path, status).Inc()
 		metrics.RequestDuration.WithLabelValues(method, path).Observe(time.Since(start).Seconds())
+	}
+}
+
+// HSTS returns Gin middleware that sets Strict-Transport-Security for HTTPS
+// requests so browsers enforce encrypted transport on subsequent requests.
+func HSTS() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
+			c.Header("Strict-Transport-Security", hstsHeaderValue)
+		}
+		c.Next()
 	}
 }
 
