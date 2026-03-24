@@ -23,6 +23,28 @@ const hstsHeaderValue = "max-age=31536000; includeSubDomains"
 // cspHeaderValue is a restrictive CSP suitable for JSON-only API responses.
 const cspHeaderValue = "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
 
+const (
+	// Gin context keys
+	requestIDKey = "request_id"
+
+	// Zerolog field keys
+	logFieldRequestID   = "request_id"
+	logFieldMethod      = "method"
+	logFieldPath        = "path"
+	logFieldStatus      = "status"
+	logFieldDurationMS  = "duration_ms"
+	logFieldRemoteAddr  = "remote_addr"
+	logFieldUserAgent   = "user_agent"
+	logFieldPanic       = "panic"
+	logMessage          = "http"
+	logMessagePanic     = "panic recovered"
+
+	// JSON field keys and values
+	jsonKeyError      = "error"
+	jsonErrorInternal = "internal_error"
+	jsonErrorNotFound = "not_found"
+)
+
 // statusText maps commonly seen HTTP status codes to their string form,
 // avoiding a strconv.Itoa allocation on every request.
 var statusText = map[int]string{
@@ -52,7 +74,7 @@ func RequestID() gin.HandlerFunc {
 			_, _ = rand.Read(buf[:]) // #nosec G104 -- crypto/rand.Read never returns error in Go 1.20+
 			id = hex.EncodeToString(buf[:])
 		}
-		c.Set("request_id", id)
+		c.Set(requestIDKey, id)
 		c.Header(RequestIDHeader, id)
 		c.Next()
 	}
@@ -81,14 +103,14 @@ func Logging(logger zerolog.Logger) gin.HandlerFunc {
 			evt = logger.Debug()
 		}
 		evt.
-			Str("request_id", c.GetString("request_id")).
-			Str("method", c.Request.Method).
-			Str("path", c.Request.URL.Path).
-			Int("status", status).
-			Int64("duration_ms", duration.Milliseconds()).
-			Str("remote_addr", c.ClientIP()).
-			Str("user_agent", c.Request.UserAgent()).
-			Msg("http")
+			Str(logFieldRequestID, c.GetString(requestIDKey)).
+			Str(logFieldMethod, c.Request.Method).
+			Str(logFieldPath, c.Request.URL.Path).
+			Int(logFieldStatus, status).
+			Int64(logFieldDurationMS, duration.Milliseconds()).
+			Str(logFieldRemoteAddr, c.ClientIP()).
+			Str(logFieldUserAgent, c.Request.UserAgent()).
+			Msg(logMessage)
 	}
 }
 
@@ -99,12 +121,12 @@ func Recovery(logger zerolog.Logger) gin.HandlerFunc {
 		defer func() {
 			if rec := recover(); rec != nil {
 				logger.Error().
-					Interface("panic", rec).
-					Str("method", c.Request.Method).
-					Str("path", c.Request.URL.Path).
-					Msg("panic recovered")
+					Interface(logFieldPanic, rec).
+					Str(logFieldMethod, c.Request.Method).
+					Str(logFieldPath, c.Request.URL.Path).
+					Msg(logMessagePanic)
 				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-					"error": "internal_error",
+					jsonKeyError: jsonErrorInternal,
 				})
 			}
 		}()
@@ -130,21 +152,13 @@ func Metrics() gin.HandlerFunc {
 	}
 }
 
-// HSTS returns Gin middleware that sets Strict-Transport-Security for HTTPS
-// requests so browsers enforce encrypted transport on subsequent requests.
-func HSTS() gin.HandlerFunc {
+// SecurityHeaders returns Gin middleware that sets various security-related
+// headers to sensible defaults for APIs.
+func SecurityHeaders() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
 			c.Header("Strict-Transport-Security", hstsHeaderValue)
 		}
-		c.Next()
-	}
-}
-
-// CSP returns Gin middleware that sets Content-Security-Policy for all
-// responses to reduce browser-side injection risks if responses are rendered.
-func CSP() gin.HandlerFunc {
-	return func(c *gin.Context) {
 		c.Header("Content-Security-Policy", cspHeaderValue)
 		c.Next()
 	}
@@ -154,7 +168,7 @@ func CSP() gin.HandlerFunc {
 func NotFound() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{
-			"error": "not_found",
+			jsonKeyError: jsonErrorNotFound,
 		})
 	}
 }

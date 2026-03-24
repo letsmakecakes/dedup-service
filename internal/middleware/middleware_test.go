@@ -96,6 +96,10 @@ func TestRecovery_CatchesPanic(t *testing.T) {
 	if rr.Code != http.StatusInternalServerError {
 		t.Errorf("expected 500, got %d", rr.Code)
 	}
+	wantBody := `{"error":"internal_error"}`
+	if rr.Body.String() != wantBody {
+		t.Errorf("expected body %q, got %q", wantBody, rr.Body.String())
+	}
 }
 
 // ── Metrics ───────────────────────────────────────────────────────────────────
@@ -116,57 +120,40 @@ func TestMetrics_DoesNotPanic(t *testing.T) {
 	}
 }
 
-// ── CSP ──────────────────────────────────────────────────────────────────────
+// ── SecurityHeaders ─────────────────────────────────────────────────────────
 
-func TestCSP_SetsHeader(t *testing.T) {
+func TestSecurityHeaders_SetsHeaders(t *testing.T) {
 	router := gin.New()
-	router.Use(CSP())
+	router.Use(SecurityHeaders())
 	router.GET("/test", func(c *gin.Context) {
 		c.String(http.StatusOK, "ok")
 	})
 
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/test", nil)
-	router.ServeHTTP(rr, req)
+	t.Run("sets HSTS and CSP for TLS requests", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.TLS = &tls.ConnectionState{}
+		router.ServeHTTP(rr, req)
 
-	if got := rr.Header().Get("Content-Security-Policy"); got != cspHeaderValue {
-		t.Errorf("expected CSP header %q, got %q", cspHeaderValue, got)
-	}
-}
-
-// ── HSTS ─────────────────────────────────────────────────────────────────────
-
-func TestHSTS_SetsHeaderForTLSRequest(t *testing.T) {
-	router := gin.New()
-	router.Use(HSTS())
-	router.GET("/test", func(c *gin.Context) {
-		c.String(http.StatusOK, "ok")
+		if got := rr.Header().Get("Content-Security-Policy"); got != cspHeaderValue {
+			t.Errorf("expected CSP header %q, got %q", cspHeaderValue, got)
+		}
+		if got := rr.Header().Get("Strict-Transport-Security"); got != hstsHeaderValue {
+			t.Errorf("expected HSTS header %q, got %q", hstsHeaderValue, got)
+		}
 	})
+	t.Run("sets CSP but not HSTS for plain HTTP requests", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "/test", nil)
+		router.ServeHTTP(rr, req)
 
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/test", nil)
-	req.TLS = &tls.ConnectionState{}
-	router.ServeHTTP(rr, req)
-
-	if got := rr.Header().Get("Strict-Transport-Security"); got != hstsHeaderValue {
-		t.Errorf("expected HSTS header %q, got %q", hstsHeaderValue, got)
-	}
-}
-
-func TestHSTS_DoesNotSetHeaderForHTTPRequest(t *testing.T) {
-	router := gin.New()
-	router.Use(HSTS())
-	router.GET("/test", func(c *gin.Context) {
-		c.String(http.StatusOK, "ok")
+		if got := rr.Header().Get("Content-Security-Policy"); got == "" {
+			t.Error("expected CSP header, but it was missing")
+		}
+		if got := rr.Header().Get("Strict-Transport-Security"); got != "" {
+			t.Errorf("expected no HSTS header on plain HTTP, got %q", got)
+		}
 	})
-
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/test", nil)
-	router.ServeHTTP(rr, req)
-
-	if got := rr.Header().Get("Strict-Transport-Security"); got != "" {
-		t.Errorf("expected no HSTS header on plain HTTP, got %q", got)
-	}
 }
 
 // ── NotFound ──────────────────────────────────────────────────────────────────
@@ -181,6 +168,10 @@ func TestNotFound_Returns404(t *testing.T) {
 
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("expected 404, got %d", rr.Code)
+	}
+	wantBody := `{"error":"not_found"}`
+	if rr.Body.String() != wantBody {
+		t.Errorf("expected body %q, got %q", wantBody, rr.Body.String())
 	}
 }
 
