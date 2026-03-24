@@ -2,7 +2,11 @@
   "server": {
     "listen_addr": ":8081",
     "log_level": "info",
-    "shutdown_timeout": "10s"
+    "shutdown_timeout": "10s",
+    "tls_enabled": false,
+    "tls_cert_file": "",
+    "tls_key_file": "",
+    "tls_min_version": "1.2"
   },
   "log": {
     "file": "log/app.log",

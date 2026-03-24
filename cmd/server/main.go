@@ -11,6 +11,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -77,6 +78,8 @@ func run() error {
 
 	logger.Info().
 		Str("addr", cfg.ListenAddr).
+		Bool("tls_enabled", cfg.TLSEnabled).
+		Str("tls_min_version", cfg.TLSMinVersion).
 		Str("redis", cfg.RedisAddr).
 		Int("redis_db", cfg.RedisDB).
 		Str("dedup_window", cfg.DedupWindow.String()).
@@ -159,6 +162,13 @@ func run() error {
 		WriteTimeout: 5 * cfg.RedisWriteTimeout,
 		IdleTimeout:  60 * cfg.RedisDialTimeout,
 	}
+	if cfg.TLSEnabled {
+		var tlsMinVersion uint16 = tls.VersionTLS12
+		if cfg.TLSMinVersion == "1.3" {
+			tlsMinVersion = tls.VersionTLS13
+		}
+		srv.TLSConfig = &tls.Config{MinVersion: tlsMinVersion}
+	}
 
 	// ── Graceful shutdown ─────────────────────────────────────────────────────
 	quit := make(chan os.Signal, 1)
@@ -166,8 +176,24 @@ func run() error {
 
 	serverErr := make(chan error, 1)
 	go func() {
-		logger.Info().Str("addr", cfg.ListenAddr).Msg("server listening")
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if cfg.TLSEnabled {
+			logger.Info().
+				Str("addr", cfg.ListenAddr).
+				Str("cert_file", cfg.TLSCertFile).
+				Str("key_file", cfg.TLSKeyFile).
+				Str("tls_min_version", cfg.TLSMinVersion).
+				Msg("https server listening")
+		} else {
+			logger.Info().Str("addr", cfg.ListenAddr).Msg("http server listening")
+		}
+
+		var err error
+		if cfg.TLSEnabled {
+			err = srv.ListenAndServeTLS(cfg.TLSCertFile, cfg.TLSKeyFile)
+		} else {
+			err = srv.ListenAndServe()
+		}
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverErr <- fmt.Errorf("http server: %w", err)
 		}
 		close(serverErr)

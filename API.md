@@ -1,6 +1,6 @@
 # API Specification - dedup-service (X-Accel-Redirect Mode)
 
-Base URL: `http://<host>:8081` (configurable via `server.listen_addr`)
+Base URL: `http://<host>:8081` or `https://<host>:8081` (configurable via `server.listen_addr`; set `server.tls_enabled=true` for HTTPS)
 
 All responses include `X-Request-ID`.
 
@@ -118,8 +118,10 @@ Error codes:
 Set a base URL first:
 
 ```bash
-BASE_URL=http://localhost:8081
+BASE_URL=https://localhost:8081
 ```
+
+If you are using a self-signed certificate in local development, add `-k` to curl commands.
 
 ### 1. Health check
 

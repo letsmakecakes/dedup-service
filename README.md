@@ -137,7 +137,11 @@ cp config.json config.json.bak   # backup before editing
   "server": {
     "listen_addr": ":8081",
     "log_level": "info",
-    "shutdown_timeout": "10s"
+    "shutdown_timeout": "10s",
+    "tls_enabled": false,
+    "tls_cert_file": "",
+    "tls_key_file": "",
+    "tls_min_version": "1.2"
   },
   "log": {
     "file": "log/app.log",
@@ -175,6 +179,10 @@ cp config.json config.json.bak   # backup before editing
 | `server.listen_addr` | `:8081` | HTTP bind address |
 | `server.log_level` | `info` | `debug` \| `info` \| `warn` \| `error` |
 | `server.shutdown_timeout` | `10s` | Graceful drain period on SIGTERM |
+| `server.tls_enabled` | `false` | Enable direct HTTPS listener in this service |
+| `server.tls_cert_file` | _(empty)_ | PEM certificate chain path (required when TLS enabled) |
+| `server.tls_key_file` | _(empty)_ | PEM private key path (required when TLS enabled) |
+| `server.tls_min_version` | `1.2` | Minimum TLS protocol version (`1.2` or `1.3`) |
 | `log.file` | `log/app.log` | Log file path |
 | `log.max_size_mb` | `50` | Max size in MB before rotation |
 | `log.max_backups` | `5` | Max old log files to keep |

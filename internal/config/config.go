@@ -18,6 +18,10 @@ type Config struct {
 	ListenAddr      string        // HTTP bind address, e.g. ":8081"
 	ShutdownTimeout time.Duration // Graceful shutdown drain period
 	LogLevel        string        // debug | info | warn | error
+	TLSEnabled      bool          // true = serve HTTPS directly from this process
+	TLSCertFile     string        // PEM certificate chain file path
+	TLSKeyFile      string        // PEM private key file path
+	TLSMinVersion   string        // "1.2" | "1.3"
 
 	// ── Logging ──────────────────────────────────────────────────────────────
 	LogFile       string // path to log file, e.g. "log/app.log"
@@ -66,6 +70,10 @@ func Load(configPath ...string) (*Config, error) {
 	v.SetDefault("server.listen_addr", ":8081")
 	v.SetDefault("server.log_level", "info")
 	v.SetDefault("server.shutdown_timeout", "10s")
+	v.SetDefault("server.tls_enabled", false)
+	v.SetDefault("server.tls_cert_file", "")
+	v.SetDefault("server.tls_key_file", "")
+	v.SetDefault("server.tls_min_version", "1.2")
 
 	v.SetDefault("redis.addr", "localhost:6379")
 	v.SetDefault("redis.password", "")
@@ -153,6 +161,10 @@ func Load(configPath ...string) (*Config, error) {
 		ListenAddr:      v.GetString("server.listen_addr"),
 		ShutdownTimeout: shutdownTimeout,
 		LogLevel:        v.GetString("server.log_level"),
+		TLSEnabled:      v.GetBool("server.tls_enabled"),
+		TLSCertFile:     v.GetString("server.tls_cert_file"),
+		TLSKeyFile:      v.GetString("server.tls_key_file"),
+		TLSMinVersion:   v.GetString("server.tls_min_version"),
 
 		LogFile:       v.GetString("log.file"),
 		LogMaxSizeMB:  v.GetInt("log.max_size_mb"),
@@ -211,6 +223,20 @@ func (c *Config) BuildExcludeSet() {
 func (c *Config) validate() error {
 	if c.ListenAddr == "" {
 		return fmt.Errorf("server.listen_addr must not be empty")
+	}
+	if c.TLSEnabled {
+		if strings.TrimSpace(c.TLSCertFile) == "" {
+			return fmt.Errorf("server.tls_cert_file must not be empty when server.tls_enabled=true")
+		}
+		if strings.TrimSpace(c.TLSKeyFile) == "" {
+			return fmt.Errorf("server.tls_key_file must not be empty when server.tls_enabled=true")
+		}
+	}
+	if strings.TrimSpace(c.TLSMinVersion) == "" {
+		return fmt.Errorf("server.tls_min_version must not be empty")
+	}
+	if c.TLSMinVersion != "1.2" && c.TLSMinVersion != "1.3" {
+		return fmt.Errorf("server.tls_min_version must be one of: 1.2, 1.3")
 	}
 	if c.RedisAddr == "" {
 		return fmt.Errorf("redis.addr must not be empty")

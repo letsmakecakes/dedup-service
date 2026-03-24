@@ -38,6 +38,12 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.XAccelRedirectPrefix != "/internal/upstream" {
 		t.Errorf("expected default XAccelRedirectPrefix /internal/upstream, got %s", cfg.XAccelRedirectPrefix)
 	}
+	if cfg.TLSEnabled {
+		t.Error("expected TLSEnabled=false by default")
+	}
+	if cfg.TLSMinVersion != "1.2" {
+		t.Errorf("expected default TLSMinVersion 1.2, got %s", cfg.TLSMinVersion)
+	}
 }
 
 func TestIsMethodExcluded(t *testing.T) {
@@ -99,5 +105,30 @@ func TestValidationRejectsEmptyAddr(t *testing.T) {
 	_, err := config.Load(path)
 	if err == nil {
 		t.Error("expected validation error for empty listen addr")
+	}
+}
+
+func TestValidationRejectsTLSEnabledWithoutCertOrKey(t *testing.T) {
+	path := writeConfigFile(t, `{
+		"server": {
+			"tls_enabled": true,
+			"tls_min_version": "1.2"
+		}
+	}`)
+	_, err := config.Load(path)
+	if err == nil {
+		t.Error("expected validation error when tls is enabled without cert/key")
+	}
+}
+
+func TestValidationRejectsInvalidTLSMinVersion(t *testing.T) {
+	path := writeConfigFile(t, `{
+		"server": {
+			"tls_min_version": "1.1"
+		}
+	}`)
+	_, err := config.Load(path)
+	if err == nil {
+		t.Error("expected validation error for invalid tls min version")
 	}
 }
