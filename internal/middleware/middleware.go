@@ -20,6 +20,9 @@ const RequestIDHeader = "X-Request-ID"
 // hstsHeaderValue is the default Strict-Transport-Security policy.
 const hstsHeaderValue = "max-age=31536000; includeSubDomains"
 
+// cspHeaderValue is a restrictive CSP suitable for JSON-only API responses.
+const cspHeaderValue = "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+
 // statusText maps commonly seen HTTP status codes to their string form,
 // avoiding a strconv.Itoa allocation on every request.
 var statusText = map[int]string{
@@ -134,6 +137,15 @@ func HSTS() gin.HandlerFunc {
 		if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
 			c.Header("Strict-Transport-Security", hstsHeaderValue)
 		}
+		c.Next()
+	}
+}
+
+// CSP returns Gin middleware that sets Content-Security-Policy for all
+// responses to reduce browser-side injection risks if responses are rendered.
+func CSP() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("Content-Security-Policy", cspHeaderValue)
 		c.Next()
 	}
 }

@@ -116,6 +116,24 @@ func TestMetrics_DoesNotPanic(t *testing.T) {
 	}
 }
 
+// ── CSP ──────────────────────────────────────────────────────────────────────
+
+func TestCSP_SetsHeader(t *testing.T) {
+	router := gin.New()
+	router.Use(CSP())
+	router.GET("/test", func(c *gin.Context) {
+		c.String(http.StatusOK, "ok")
+	})
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/test", nil)
+	router.ServeHTTP(rr, req)
+
+	if got := rr.Header().Get("Content-Security-Policy"); got != cspHeaderValue {
+		t.Errorf("expected CSP header %q, got %q", cspHeaderValue, got)
+	}
+}
+
 // ── HSTS ─────────────────────────────────────────────────────────────────────
 
 func TestHSTS_SetsHeaderForTLSRequest(t *testing.T) {
