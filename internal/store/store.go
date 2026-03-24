@@ -86,7 +86,8 @@ func (s *RedisStore) IsDuplicate(ctx context.Context, key string, ttl time.Durat
 			// Key already existed → duplicate
 			return true, nil
 		}
-		return false, fmt.Errorf("%w: %s", ErrUnavailable, err.Error())
+		// Any other Redis error is treated as a store availability issue.
+		return false, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 	// "OK" → key was created → not a duplicate
 	return false, nil
@@ -95,7 +96,7 @@ func (s *RedisStore) IsDuplicate(ctx context.Context, key string, ttl time.Durat
 // Ping checks Redis connectivity.
 func (s *RedisStore) Ping(ctx context.Context) error {
 	if err := s.client.Ping(ctx).Err(); err != nil {
-		return fmt.Errorf("%w: %s", ErrUnavailable, err.Error())
+		return fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 	return nil
 }
