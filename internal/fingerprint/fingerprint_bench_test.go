@@ -55,3 +55,35 @@ func BenchmarkRedisKey(b *testing.B) {
 		_ = fp.RedisKey()
 	}
 }
+
+// Streaming benchmarks: hash without buffering full body.
+
+func BenchmarkStreamingRedisKey_SmallBody(b *testing.B) {
+	body := `{"amount":100}`
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		r := httptest.NewRequest("POST", "/api/orders?ref=abc", strings.NewReader(body))
+		_, _, _ = fingerprint.StreamingRedisKey(r.Method, r.RequestURI, r.Body)
+	}
+}
+
+func BenchmarkStreamingRedisKey_LargeBody(b *testing.B) {
+	body := strings.Repeat("x", 65536)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		r := httptest.NewRequest("POST", "/api/orders?ref=abc", strings.NewReader(body))
+		_, _, _ = fingerprint.StreamingRedisKey(r.Method, r.RequestURI, r.Body)
+	}
+}
+
+func BenchmarkStreamingHash(b *testing.B) {
+	body := `{"amount":100}`
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		r := httptest.NewRequest("POST", "/api/orders?ref=abc", strings.NewReader(body))
+		_, _, _ = fingerprint.StreamingHash(r.Method, r.RequestURI, r.Body)
+	}
+}

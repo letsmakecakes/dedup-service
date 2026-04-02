@@ -135,6 +135,91 @@ func TestRedisKeyPrefix(t *testing.T) {
 	}
 }
 
+// ── Streaming fingerprinting (no buffering) ──────────────────────────────────
+
+func TestStreamingRedisKeyEqualsBuffered(t *testing.T) {
+	// Verify streaming path produces identical keys to buffered path.
+	method, uri := "POST", "/api/orders"
+	body := `{"id":"test","amount":999}`
+
+	// Buffered path
+	r := req(method, uri, body)
+	fp, _ := fingerprint.FromHTTP(r)
+	bufferedKey := fp.RedisKey()
+
+	// Streaming path
+	r2 := req(method, uri, body)
+	streamedKey, _, _ := fingerprint.StreamingRedisKey(method, uri, r2.Body)
+
+	if bufferedKey != streamedKey {
+		t.Errorf("streaming and buffered keys differ:\n  buffered:  %s\n  streamed:  %s", bufferedKey, streamedKey)
+	}
+}
+
+func TestStreamingRedisKeyLargeBody(t *testing.T) {
+	// Verify streaming handles large bodies without buffering full content.
+	method, uri := "POST", "/api/orders"
+	largeBody := strings.Repeat("x", 10*1024*1024) // 10 MB
+
+	r := req(method, uri, largeBody)
+	key, bodyLen, err := fingerprint.StreamingRedisKey(method, uri, r.Body)
+
+	if err != nil {
+		t.Fatalf("streaming failed: %v", err)
+	}
+
+	if !strings.HasPrefix(key, "dedup:") {
+		t.Errorf("key missing prefix: %s", key)
+	}
+	if len(key) != 70 {
+		t.Errorf("unexpected key length %d", len(key))
+	}
+
+	// Verify body length is reported correctly
+	if bodyLen != int64(len(largeBody)) {
+		t.Errorf("body length mismatch: got %d, want %d", bodyLen, len(largeBody))
+	}
+}
+
+func TestStreamingRedisKeyEmptyBody(t *testing.T) {
+	// Verify streaming handles empty/nil bodies correctly.
+	method, uri := "GET", "/api/status"
+
+	r := req(method, uri, "")
+	key, bodyLen, err := fingerprint.StreamingRedisKey(method, uri, r.Body)
+
+	if err != nil {
+		t.Fatalf("streaming failed: %v", err)
+	}
+
+	if bodyLen != 0 {
+		t.Errorf("expected empty body, got %d bytes", bodyLen)
+	}
+
+	if !strings.HasPrefix(key, "dedup:") {
+		t.Errorf("key missing prefix: %s", key)
+	}
+}
+
+func TestStreamingHashEqualsBuffered(t *testing.T) {
+	// Verify StreamingHash produces same result as buffered path.
+	method, uri := "POST", "/api/data"
+	body := `{"data":"streaming-test"}`
+
+	// Buffered
+	r := req(method, uri, body)
+	fp, _ := fingerprint.FromHTTP(r)
+	bufferedHash := fp.Hash()
+
+	// Streaming
+	r2 := req(method, uri, body)
+	streamedHash, _, _ := fingerprint.StreamingHash(method, uri, r2.Body)
+
+	if bufferedHash != streamedHash {
+		t.Errorf("streaming and buffered hashes differ:\n  buffered:  %s\n  streamed:  %s", bufferedHash, streamedHash)
+	}
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 type hasher interface{ Hash() string }

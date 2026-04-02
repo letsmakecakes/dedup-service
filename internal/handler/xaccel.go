@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -51,34 +52,26 @@ func (h *XAccelDedupHandler) Handle(c *gin.Context) {
 		return
 	}
 
-	// Read the full body so dedup hashing includes all payload bytes.
-	var body []byte
-	if c.Request.Body != nil {
-		var err error
-		body, err = io.ReadAll(c.Request.Body)
-		if err != nil {
-			h.logger.Error().Err(err).Msg("failed to read request body")
-			metrics.DedupChecksTotal.WithLabelValues("error").Inc()
-			h.handleStoreErr(c)
-			return
-		}
+	// Stream and hash the request body without buffering the entire body in memory.
+	// This avoids large buffer allocations for the hot request path.
+	var body io.Reader = c.Request.Body
+	if body == nil {
+		body = io.NopCloser(strings.NewReader(""))
 	}
 
-	bodyLen := len(body)
-
-	// Build fingerprint from the complete body bytes.
-	fp := &fingerprint.Request{
-		Method: c.Request.Method,
-		URI:    c.Request.RequestURI,
-		Body:   body,
+	key, bodyLen, err := fingerprint.StreamingRedisKey(c.Request.Method, c.Request.RequestURI, body)
+	if err != nil {
+		h.logger.Error().Err(err).Msg("failed to read or hash request body")
+		metrics.DedupChecksTotal.WithLabelValues("error").Inc()
+		h.handleStoreErr(c)
+		return
 	}
-	key := fp.RedisKey()
 
 	h.logger.Debug().
 		Str("key", key).
 		Str("method", c.Request.Method).
 		Str("uri", c.Request.RequestURI).
-		Int("body_bytes", bodyLen).
+		Int64("body_bytes", bodyLen).
 		Msg("xaccel dedup check")
 
 	// Atomic check-and-set with explicit deadline.
@@ -107,8 +100,8 @@ func (h *XAccelDedupHandler) Handle(c *gin.Context) {
 	if isDuplicate {
 		h.logger.Debug().
 			Str("key", key).
-			Str("method", fp.Method).
-			Str("uri", fp.URI).
+			Str("method", c.Request.Method).
+			Str("uri", c.Request.RequestURI).
 			Msg("duplicate request blocked")
 		metrics.DedupChecksTotal.WithLabelValues("duplicate").Inc()
 		c.Data(http.StatusConflict, jsonContentType, duplicateJSON)

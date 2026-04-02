@@ -88,6 +88,54 @@ func (f *Request) Hash() string {
 	return string(buf[:])
 }
 
+// StreamingRedisKey computes the Redis key by streaming and hashing the request body
+// without buffering the entire body in memory. The request body is consumed by this call.
+//
+// Returns the fully-qualified Redis key and the number of bytes read from the body.
+// Format: "dedup:<64-char hex SHA-256>"
+//
+// This is the preferred method for the hot request path to minimize allocations.
+func StreamingRedisKey(method, uri string, body io.Reader) (string, int64, error) {
+	var buf [len(redisKeyPrefix) + sha256HexLen]byte
+	copy(buf[:], redisKeyPrefix)
+	bodyLen, err := streamHashInto(method, uri, body, buf[len(redisKeyPrefix):])
+	return string(buf[:]), bodyLen, err
+}
+
+// StreamingHash computes the lowercase hex-encoded SHA-256 of the fingerprint inputs
+// by streaming and hashing the request body without buffering.
+// The request body is consumed by this call.
+func StreamingHash(method, uri string, body io.Reader) (string, int64, error) {
+	var buf [sha256HexLen]byte
+	bodyLen, err := streamHashInto(method, uri, body, buf[:])
+	return string(buf[:]), bodyLen, err
+}
+
+// streamHashInto hashes method + URI + body from reader and writes the 64 hex chars into dst.
+// dst must be at least 64 bytes. The hasher is borrowed from a pool. Body is streamed
+// without buffering the entire content.
+func streamHashInto(method, uri string, body io.Reader, dst []byte) (int64, error) {
+	h := hasherPool.Get().(hash.Hash)
+	h.Reset()
+	defer hasherPool.Put(h)
+
+	// Write method and URI as raw bytes (zero-copy via unsafe).
+	h.Write(unsafe.Slice(unsafe.StringData(method), len(method))) // #nosec G103 G104
+	h.Write(unsafe.Slice(unsafe.StringData(uri), len(uri)))       // #nosec G103 G104
+
+	// Stream body directly to hasher without buffering the entire body.
+	bodyLen, err := io.Copy(h, body)
+	if err != nil {
+		return bodyLen, err
+	}
+
+	var digest [sha256Len]byte
+	h.Sum(digest[:0])
+	hex.Encode(dst, digest[:])
+
+	return bodyLen, nil
+}
+
 // hashInto computes the SHA-256 and writes the 64 hex chars into dst.
 // dst must be at least 64 bytes. The hasher is borrowed from a pool.
 func (f *Request) hashInto(dst []byte) {
