@@ -55,9 +55,10 @@ type Config struct {
 	// Body is available for fingerprinting in this mode.
 
 	// ── Performance ──────────────────────────────────────────────────────────
-	LocalCacheEnabled bool          // L1 in-process cache for duplicate lookups
-	GOGC              int           // Go GC target percentage (0 = use Go default of 100)
-	StoreTimeout      time.Duration // context deadline for store (Redis) calls
+	LocalCacheEnabled     bool          // L1 in-process cache for duplicate lookups
+	GOGC                  int           // Go GC target percentage (0 = use Go default of 100)
+	StoreTimeout          time.Duration // context deadline for store (Redis) calls
+	DisableRequestLogging bool          // Disable per-request logging for low latency (HFT)
 }
 
 // Load reads configuration from the JSON file at configPath (default "config.json"
@@ -83,8 +84,9 @@ func Load(configPath ...string) (*Config, error) {
 	v.SetDefault("redis.write_timeout", "200ms")
 
 	v.SetDefault("performance.local_cache", true)
-	v.SetDefault("performance.gogc", 0)
+	v.SetDefault("performance.gogc", 50)
 	v.SetDefault("performance.store_timeout", "500ms")
+	v.SetDefault("performance.disable_request_logging", false)
 	v.SetDefault("redis.pool_size", 100)
 	v.SetDefault("redis.min_idle", 20)
 
@@ -188,9 +190,10 @@ func Load(configPath ...string) (*Config, error) {
 
 		XAccelRedirectPrefix: v.GetString("proxy.x_accel_redirect_prefix"),
 
-		LocalCacheEnabled: v.GetBool("performance.local_cache"),
-		GOGC:              v.GetInt("performance.gogc"),
-		StoreTimeout:      storeTimeout,
+		LocalCacheEnabled:     v.GetBool("performance.local_cache"),
+		GOGC:                  v.GetInt("performance.gogc"),
+		StoreTimeout:          storeTimeout,
+		DisableRequestLogging: v.GetBool("performance.disable_request_logging"),
 	}
 
 	// Build O(1) method-exclusion set.

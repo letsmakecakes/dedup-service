@@ -28,16 +28,16 @@ const (
 	requestIDKey = "request_id"
 
 	// Zerolog field keys
-	logFieldRequestID   = "request_id"
-	logFieldMethod      = "method"
-	logFieldPath        = "path"
-	logFieldStatus      = "status"
-	logFieldDurationMS  = "duration_ms"
-	logFieldRemoteAddr  = "remote_addr"
-	logFieldUserAgent   = "user_agent"
-	logFieldPanic       = "panic"
-	logMessage          = "http"
-	logMessagePanic     = "panic recovered"
+	logFieldRequestID  = "request_id"
+	logFieldMethod     = "method"
+	logFieldPath       = "path"
+	logFieldStatus     = "status"
+	logFieldDurationMS = "duration_ms"
+	logFieldRemoteAddr = "remote_addr"
+	logFieldUserAgent  = "user_agent"
+	logFieldPanic      = "panic"
+	logMessage         = "http"
+	logMessagePanic    = "panic recovered"
 
 	// JSON field keys and values
 	jsonKeyError      = "error"
@@ -82,13 +82,29 @@ func RequestID() gin.HandlerFunc {
 
 // Logging returns Gin middleware that emits a structured zerolog line for every
 // request including the HTTP method, path, response status, and wall-clock duration.
-func Logging(logger zerolog.Logger) gin.HandlerFunc {
+// If disableRequestLogging is true, only errors and slow requests (>100ms) are logged.
+// This is useful for low-latency/high-throughput deployments like high-frequency trading.
+func Logging(logger zerolog.Logger, disableRequestLogging bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		c.Next()
 
 		status := c.Writer.Status()
 		duration := time.Since(start)
+
+		// If request logging disabled, only log errors and slow requests.
+		if disableRequestLogging {
+			if status >= 400 || duration > 100*time.Millisecond {
+				logger.Warn().
+					Str(logFieldRequestID, c.GetString(requestIDKey)).
+					Str(logFieldMethod, c.Request.Method).
+					Str(logFieldPath, c.Request.URL.Path).
+					Int(logFieldStatus, status).
+					Int64(logFieldDurationMS, duration.Milliseconds()).
+					Msg(logMessage)
+			}
+			return
+		}
 
 		// Choose log level based on status and latency to reduce I/O
 		// at high throughput. Normal 2xx goes to Debug; slow or error

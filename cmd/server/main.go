@@ -122,7 +122,7 @@ func run() error {
 	router.Use(middleware.Recovery(logger))
 	router.Use(middleware.RequestID())
 	router.Use(middleware.SecurityHeaders())
-	router.Use(middleware.Logging(logger))
+	router.Use(middleware.Logging(logger, cfg.DisableRequestLogging))
 	router.Use(middleware.Metrics())
 
 	// Routes

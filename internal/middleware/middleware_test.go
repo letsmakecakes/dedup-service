@@ -66,7 +66,7 @@ func TestRequestID_ReusesClientProvided(t *testing.T) {
 
 func TestLogging_DoesNotPanic(t *testing.T) {
 	router := gin.New()
-	router.Use(Logging(silentLogger()))
+	router.Use(Logging(silentLogger(), false))
 	router.GET("/test", func(c *gin.Context) {
 		c.String(http.StatusOK, "ok")
 	})

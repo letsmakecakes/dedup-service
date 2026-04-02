@@ -36,7 +36,8 @@
   },
   "performance": {
     "local_cache": true,
-    "gogc": 200,
-    "store_timeout": "500ms"
+    "gogc": 50,
+    "store_timeout": "500ms",
+    "disable_request_logging": true
   }
 }
