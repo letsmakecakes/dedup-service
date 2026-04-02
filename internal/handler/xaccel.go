@@ -51,29 +51,28 @@ func (h *XAccelDedupHandler) Handle(c *gin.Context) {
 		return
 	}
 
-	// Read body using a pooled buffer to avoid per-request allocations.
-	bufp := fingerprint.GetBodyBuf()
-	var bodyLen int
+	// Read the full body so dedup hashing includes all payload bytes.
+	var body []byte
 	if c.Request.Body != nil {
-		n, err := io.ReadFull(c.Request.Body, *bufp)
-		if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
-			fingerprint.PutBodyBuf(bufp)
+		var err error
+		body, err = io.ReadAll(c.Request.Body)
+		if err != nil {
 			h.logger.Error().Err(err).Msg("failed to read request body")
 			metrics.DedupChecksTotal.WithLabelValues("error").Inc()
 			h.handleStoreErr(c)
 			return
 		}
-		bodyLen = n
 	}
 
-	// Build fingerprint from pooled buffer — key is computed before returning buffer.
+	bodyLen := len(body)
+
+	// Build fingerprint from the complete body bytes.
 	fp := &fingerprint.Request{
 		Method: c.Request.Method,
 		URI:    c.Request.RequestURI,
-		Body:   (*bufp)[:bodyLen],
+		Body:   body,
 	}
 	key := fp.RedisKey()
-	fingerprint.PutBodyBuf(bufp)
 
 	h.logger.Debug().
 		Str("key", key).

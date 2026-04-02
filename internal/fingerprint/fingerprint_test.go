@@ -107,17 +107,17 @@ func TestXOriginalHeadersIgnored(t *testing.T) {
 	assertSame(t, "X-Original-* headers must not affect fingerprint", fpBase, fpWithProxy)
 }
 
-// ── Body truncation ───────────────────────────────────────────────────────────
+// ── Full body hashing ────────────────────────────────────────────────────────
 
-func TestBodyTruncatedToMaxBytes(t *testing.T) {
-	// Build a body larger than MaxBodyBytes
-	large := strings.Repeat("x", int(fingerprint.MaxBodyBytes)+100)
+func TestBodyReadFully(t *testing.T) {
+	const oldMaxBodyBytes = 65536
+	large := strings.Repeat("x", oldMaxBodyBytes+100)
 	fp, err := fingerprint.FromHTTP(req("POST", "/api/orders", large))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if int64(len(fp.Body)) > fingerprint.MaxBodyBytes {
-		t.Errorf("body should be truncated to %d bytes, got %d", fingerprint.MaxBodyBytes, len(fp.Body))
+	if got, want := len(fp.Body), len(large); got != want {
+		t.Errorf("body should be read fully, got %d bytes, want %d", got, want)
 	}
 }
 
