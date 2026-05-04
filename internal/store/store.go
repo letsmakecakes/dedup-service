@@ -69,28 +69,19 @@ func NewRedis(cfg *config.Config) (*RedisStore, error) {
 	return &RedisStore{client: client}, nil
 }
 
-// IsDuplicate executes SET key 1 NX PX <ttl-ms>.
+// IsDuplicate executes SET key 1 NX with the given TTL.
 //
 // Redis semantics:
-//   - SET NX returns "OK"    → key was absent and has now been set → NOT a duplicate.
-//   - SET NX returns redis.Nil → key already existed               → duplicate detected.
+//   - SetNX → true  → key was absent and has now been set → NOT a duplicate.
+//   - SetNX → false → key already existed                 → duplicate detected.
 //
 // Any Redis error is wrapped as ErrUnavailable so the caller can apply fail-open logic.
 func (s *RedisStore) IsDuplicate(ctx context.Context, key string, ttl time.Duration) (bool, error) {
-	err := s.client.SetArgs(ctx, key, 1, redis.SetArgs{
-		Mode: "NX",
-		TTL:  ttl,
-	}).Err()
+	ok, err := s.client.SetNX(ctx, key, 1, ttl).Result()
 	if err != nil {
-		if errors.Is(err, redis.Nil) {
-			// Key already existed → duplicate
-			return true, nil
-		}
-		// Any other Redis error is treated as a store availability issue.
 		return false, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
-	// "OK" → key was created → not a duplicate
-	return false, nil
+	return !ok, nil
 }
 
 // Ping checks Redis connectivity.

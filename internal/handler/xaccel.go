@@ -47,7 +47,7 @@ func NewXAccelDedup(cfg *config.Config, s store.Store, logger zerolog.Logger, re
 func (h *XAccelDedupHandler) Handle(c *gin.Context) {
 	// Skip dedup for excluded methods — redirect to upstream immediately.
 	if h.cfg.IsMethodExcluded(c.Request.Method) {
-		metrics.DedupChecksTotal.WithLabelValues("excluded").Inc()
+		metrics.DedupExcluded.Inc()
 		h.allow(c)
 		return
 	}
@@ -61,7 +61,7 @@ func (h *XAccelDedupHandler) Handle(c *gin.Context) {
 	key, bodyLen, err := fingerprint.StreamingRedisKey(c.Request.Method, c.Request.RequestURI, body)
 	if err != nil {
 		h.logger.Error().Err(err).Msg("failed to read or hash request body")
-		metrics.DedupChecksTotal.WithLabelValues("error").Inc()
+		metrics.DedupError.Inc()
 		h.handleStoreErr(c)
 		return
 	}
@@ -82,7 +82,7 @@ func (h *XAccelDedupHandler) Handle(c *gin.Context) {
 	}
 	t0 := time.Now()
 	isDuplicate, err := h.store.IsDuplicate(storeCtx, key, h.cfg.DedupWindow)
-	metrics.StoreLatency.WithLabelValues("is_duplicate").Observe(time.Since(t0).Seconds())
+	metrics.StoreIsDuplicateLatency.Observe(time.Since(t0).Seconds())
 	if err != nil {
 		if errors.Is(err, store.ErrUnavailable) {
 			h.logger.Warn().Err(err).
@@ -91,7 +91,7 @@ func (h *XAccelDedupHandler) Handle(c *gin.Context) {
 		} else {
 			h.logger.Error().Err(err).Msg("store error")
 		}
-		metrics.DedupChecksTotal.WithLabelValues("error").Inc()
+		metrics.DedupError.Inc()
 		h.handleStoreErr(c)
 		return
 	}
@@ -102,13 +102,13 @@ func (h *XAccelDedupHandler) Handle(c *gin.Context) {
 			Str("method", c.Request.Method).
 			Str("uri", c.Request.RequestURI).
 			Msg("duplicate request blocked")
-		metrics.DedupChecksTotal.WithLabelValues("duplicate").Inc()
+		metrics.DedupDuplicate.Inc()
 		c.Data(http.StatusConflict, jsonContentType, duplicateJSON)
 		return
 	}
 
 	h.logger.Debug().Str("key", key).Msg("request allowed — X-Accel-Redirect to upstream")
-	metrics.DedupChecksTotal.WithLabelValues("allowed").Inc()
+	metrics.DedupAllowed.Inc()
 	h.allow(c)
 }
 

@@ -204,8 +204,15 @@ func Load(configPath ...string) (*Config, error) {
 }
 
 // IsMethodExcluded reports whether deduplication should be skipped for method.
-// Uses an O(1) map lookup built at config load time.
+// Uses an O(1) map lookup built at config load time. The exclude set is keyed
+// by upper-case method names; HTTP methods almost always arrive in canonical
+// form, so the direct lookup hits first and we avoid the strings.ToUpper
+// allocation. ToUpper is only invoked on a miss as a safety net for
+// non-canonical clients.
 func (c *Config) IsMethodExcluded(method string) bool {
+	if _, ok := c.excludeSet[method]; ok {
+		return true
+	}
 	_, ok := c.excludeSet[strings.ToUpper(method)]
 	return ok
 }

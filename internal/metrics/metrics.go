@@ -54,4 +54,14 @@ var (
 		Name:      "cache_misses_total",
 		Help:      "Total L1 cache misses (fell through to Redis).",
 	})
+
+	// Pre-resolved counters for fixed dedup outcomes — avoids a label
+	// map lookup on every request.
+	DedupAllowed   = DedupChecksTotal.WithLabelValues("allowed")
+	DedupDuplicate = DedupChecksTotal.WithLabelValues("duplicate")
+	DedupError     = DedupChecksTotal.WithLabelValues("error")
+	DedupExcluded  = DedupChecksTotal.WithLabelValues("excluded")
+
+	// Pre-resolved observer for the IsDuplicate store call.
+	StoreIsDuplicateLatency = StoreLatency.WithLabelValues("is_duplicate")
 )

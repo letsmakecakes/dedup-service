@@ -48,9 +48,12 @@ func (c *LocalCache) Contains(key string) bool {
 		return false
 	}
 	if now >= expiry {
-		// Lazy eviction of expired entry.
+		// Lazy eviction of expired entry. Re-check under the write lock in case
+		// the entry was concurrently overwritten with a fresh expiry; reuse the
+		// cached `now` (a slightly stale timestamp is conservative — it can only
+		// reduce eviction, never wrongly delete a fresh entry).
 		shard.mu.Lock()
-		if exp, still := shard.data[key]; still && time.Now().UnixNano() >= exp {
+		if exp, still := shard.data[key]; still && now >= exp {
 			delete(shard.data, key)
 		}
 		shard.mu.Unlock()
