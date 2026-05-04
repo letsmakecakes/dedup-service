@@ -83,7 +83,6 @@ func run() error {
 		Str("redis", cfg.RedisAddr).
 		Int("redis_db", cfg.RedisDB).
 		Str("dedup_window", cfg.DedupWindow.String()).
-		Int64("max_body_bytes", cfg.MaxBodyBytes).
 		Bool("fail_open", cfg.FailOpen).
 		Strs("exclude_methods", cfg.ExcludeMethods).
 		Msg("starting dedup-service")

@@ -30,7 +30,6 @@ func silentLogger() zerolog.Logger {
 func baseCfg() *config.Config {
 	cfg := &config.Config{
 		DedupWindow:    10 * time.Second,
-		MaxBodyBytes:   65536,
 		FailOpen:       true,
 		ExcludeMethods: []string{"GET", "HEAD", "OPTIONS"},
 	}

@@ -42,7 +42,6 @@ type Config struct {
 
 	// ── Deduplication ─────────────────────────────────────────────────────────
 	DedupWindow    time.Duration // Redis TTL for fingerprint keys
-	MaxBodyBytes   int64         // body bytes read for hashing; remainder discarded
 	FailOpen       bool          // true = allow requests when Redis is unreachable
 	ExcludeMethods []string      // HTTP methods that bypass dedup entirely
 	// excludeSet is an O(1) lookup table built from ExcludeMethods.
@@ -97,7 +96,6 @@ func Load(configPath ...string) (*Config, error) {
 	v.SetDefault("log.compress", true)
 
 	v.SetDefault("dedup.window", "10s")
-	v.SetDefault("dedup.max_body_bytes", 65536)
 	v.SetDefault("dedup.fail_open", true)
 	v.SetDefault("dedup.exclude_methods", []string{"GET", "HEAD", "OPTIONS"})
 
@@ -184,7 +182,6 @@ func Load(configPath ...string) (*Config, error) {
 		RedisMinIdle:      v.GetInt("redis.min_idle"),
 
 		DedupWindow:    dedupWindow,
-		MaxBodyBytes:   v.GetInt64("dedup.max_body_bytes"),
 		FailOpen:       v.GetBool("dedup.fail_open"),
 		ExcludeMethods: methods,
 
@@ -246,9 +243,6 @@ func (c *Config) validate() error {
 	}
 	if c.DedupWindow <= 0 {
 		return fmt.Errorf("dedup.window must be a positive duration, got %s", c.DedupWindow)
-	}
-	if c.MaxBodyBytes <= 0 {
-		return fmt.Errorf("dedup.max_body_bytes must be positive, got %d", c.MaxBodyBytes)
 	}
 	if c.ShutdownTimeout <= 0 {
 		return fmt.Errorf("server.shutdown_timeout must be positive, got %s", c.ShutdownTimeout)

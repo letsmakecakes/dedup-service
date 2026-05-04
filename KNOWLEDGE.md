@@ -21,14 +21,14 @@ Legacy reverse-proxy and sidecar/auth-request modes have been removed from runti
 Formula:
 
 ```
-SHA-256( Method | URI+Query | Body[:max_body_bytes] )
+SHA-256( Method | URI+Query | Body )
 ```
 
 Included:
 
 - Method
 - URI + query
-- Body (up to configured byte limit)
+- Full raw body
 
 Excluded by design:
 
@@ -51,7 +51,7 @@ Behavior:
 - `ANY /*`: catch-all dedup handler (primary request path)
 - `GET /healthz`: readiness/liveness
 - `GET /metrics`: Prometheus metrics
-- `GET /debug/pprof/*`: profiling endpoints
+- `GET /debug/pprof/*`: profiling endpoints (localhost-only, port 6060)
 
 ## 6. Responses
 
@@ -87,7 +87,6 @@ Config is loaded from JSON files (`config.json`, `config.docker.json`).
 Important keys:
 
 - `dedup.window`
-- `dedup.max_body_bytes`
 - `dedup.fail_open`
 - `dedup.exclude_methods`
 - `proxy.x_accel_redirect_prefix`

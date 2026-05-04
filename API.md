@@ -11,7 +11,7 @@ The service is a dedup gate for Nginx and handles unmatched routes via catch-all
 Fingerprint formula:
 
 ```
-SHA-256( Method | URI+Query | Body[:max_body_bytes] )
+SHA-256( Method | URI+Query | Body )
 ```
 
 Request outcomes:

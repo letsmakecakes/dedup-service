@@ -38,14 +38,14 @@ Nginx sends the full client request (method, URI, headers, body) to the dedup se
 ### Fingerprint
 
 ```
-SHA-256( Method | URI+Query | Body[:MaxBodyBytes] )
+SHA-256( Method | URI+Query | Body )
 ```
 
 | Field | Notes |
 |---|---|
 | HTTP Method | POST vs PUT to same URI are distinct |
 | URI + Query | Full request URI including query string |
-| Body | First 64 KB (configurable via `dedup.max_body_bytes`) |
+| Body | Full raw body bytes |
 
 **Client IP and Authorization are intentionally excluded.** The fingerprint depends only on the request content itself — identical requests from different callers are considered duplicates.
 
@@ -162,7 +162,6 @@ cp config.json config.json.bak   # backup before editing
   },
   "dedup": {
     "window": "10s",
-    "max_body_bytes": 65536,
     "fail_open": true,
     "exclude_methods": ["GET", "HEAD", "OPTIONS"]
   },
@@ -197,7 +196,6 @@ cp config.json config.json.bak   # backup before editing
 | `redis.pool_size` | `100` | Connection pool size |
 | `redis.min_idle` | `20` | Minimum idle connections |
 | `dedup.window` | `10s` | Dedup window (Redis TTL) |
-| `dedup.max_body_bytes` | `65536` | Max body bytes hashed (64 KB) |
 | `dedup.fail_open` | `true` | Allow requests if Redis is down |
 | `dedup.exclude_methods` | `["GET","HEAD","OPTIONS"]` | Methods that bypass dedup |
 | `proxy.x_accel_redirect_prefix` | `/internal/upstream` | Nginx internal location prefix used for X-Accel-Redirect forwarding. |
@@ -375,14 +373,14 @@ Legacy reverse-proxy and sidecar/auth-request modes have been removed from runti
 Formula:
 
 ```
-SHA-256( Method | URI+Query | Body[:max_body_bytes] )
+SHA-256( Method | URI+Query | Body )
 ```
 
 Included:
 
 - Method
 - URI + query
-- Body (up to configured byte limit)
+- Full raw body
 
 Excluded by design:
 
@@ -441,7 +439,6 @@ Config is loaded from JSON files (`config.json`, `config.docker.json`).
 Important keys:
 
 - `dedup.window`
-- `dedup.max_body_bytes`
 - `dedup.fail_open`
 - `dedup.exclude_methods`
 - `proxy.x_accel_redirect_prefix`

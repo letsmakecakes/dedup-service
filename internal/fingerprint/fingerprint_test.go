@@ -110,8 +110,7 @@ func TestXOriginalHeadersIgnored(t *testing.T) {
 // ── Full body hashing ────────────────────────────────────────────────────────
 
 func TestBodyReadFully(t *testing.T) {
-	const oldMaxBodyBytes = 65536
-	large := strings.Repeat("x", oldMaxBodyBytes+100)
+	large := strings.Repeat("x", 100_000)
 	fp, err := fingerprint.FromHTTP(req("POST", "/api/orders", large))
 	if err != nil {
 		t.Fatal(err)

@@ -58,8 +58,6 @@ func (h *XAccelDedupHandler) Handle(c *gin.Context) {
 	if body == nil {
 		body = io.NopCloser(strings.NewReader(""))
 	}
-	body = io.LimitReader(body, h.cfg.MaxBodyBytes)
-
 	key, bodyLen, err := fingerprint.StreamingRedisKey(c.Request.Method, c.Request.RequestURI, body)
 	if err != nil {
 		h.logger.Error().Err(err).Msg("failed to read or hash request body")
