@@ -95,8 +95,8 @@ dedup-service/
 ### Run locally
 
 ```bash
-# Start Redis
-docker run -d -p 6379:6379 redis:7-alpine
+# Start Redis (must be running before the service)
+redis-server --daemonize yes
 
 # Build and run
 make build
@@ -312,12 +312,9 @@ Every request gets an `X-Request-ID` header. If the client provides one, it is p
 
 ### Grafana & Prometheus Monitoring
 
-```bash
-make monitoring-up      # start Prometheus (localhost:9090) + Grafana (localhost:3000)
-make monitoring-down    # stop and remove containers
-```
+See [docs/grafana-setup.md](docs/grafana-setup.md) for full setup instructions.
 
-Grafana ships with a pre-provisioned **Dedup Service** dashboard containing:
+A pre-built dashboard JSON is at `monitoring/grafana/dashboards/dedup-service.json`. Import it via **Grafana → Dashboards → Import** or via provisioning.
 
 | Row | Panels |
 |---|---|
@@ -326,8 +323,6 @@ Grafana ships with a pre-provisioned **Dedup Service** dashboard containing:
 | **Redis / Store** | Store Latency (p50/p95/p99), L1 Cache Hits vs Misses |
 | **HTTP Status Codes** | Status Code Distribution, Error Rate (5xx) |
 | **Latency by Endpoint** | /api/* Latency, /healthz Latency |
-
-Default credentials: `admin` / `admin`
 
 ---
 
@@ -434,7 +429,7 @@ Health failure:
 
 ### 7. Configuration
 
-Config is loaded from JSON files (`config.json`, `config.docker.json`).
+Config is loaded from `config.json` (Viper). If absent, defaults are used.
 
 Important keys:
 

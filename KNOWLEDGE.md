@@ -82,7 +82,7 @@ Health failure:
 
 ## 7. Configuration
 
-Config is loaded from JSON files (`config.json`, `config.docker.json`).
+Config is loaded from `config.json` (Viper). If absent, defaults are used.
 
 Important keys:
 
