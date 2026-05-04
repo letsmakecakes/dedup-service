@@ -3,7 +3,7 @@
 # functional_test.sh — Functional tests for the dedup-service
 #
 # Prerequisites:
-#   - Redis running on localhost:6379  (e.g. docker run -d -p 6379:6379 redis:7-alpine)
+#   - Redis running on localhost:6379
 #   - dedup-service running on localhost:8081
 #   - curl
 #
@@ -72,7 +72,7 @@ separator() {
 
 # Flush Redis to ensure clean state
 flush_redis() {
-    docker exec redis-test redis-cli FLUSHALL > /dev/null 2>&1 || true
+    redis-cli FLUSHALL > /dev/null 2>&1 || true
 }
 
 # ============================================================================
