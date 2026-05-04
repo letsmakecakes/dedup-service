@@ -33,8 +33,6 @@ const (
 	logFieldPath       = "path"
 	logFieldStatus     = "status"
 	logFieldDurationMS = "duration_ms"
-	logFieldRemoteAddr = "remote_addr"
-	logFieldUserAgent  = "user_agent"
 	logFieldPanic      = "panic"
 	logMessage         = "http"
 	logMessagePanic    = "panic recovered"
@@ -124,8 +122,6 @@ func Logging(logger zerolog.Logger, disableRequestLogging bool) gin.HandlerFunc 
 			Str(logFieldPath, c.Request.URL.Path).
 			Int(logFieldStatus, status).
 			Int64(logFieldDurationMS, duration.Milliseconds()).
-			Str(logFieldRemoteAddr, c.ClientIP()).
-			Str(logFieldUserAgent, c.Request.UserAgent()).
 			Msg(logMessage)
 	}
 }

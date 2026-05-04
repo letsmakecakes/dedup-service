@@ -139,21 +139,28 @@ func run() error {
 		Msg("X-Accel-Redirect mode enabled (body-based dedup, Nginx forwards)")
 	router.NoRoute(xaccelH.Handle)
 
-	// pprof endpoints for runtime profiling (CPU, memory, goroutines, etc.).
-	pprofGroup := router.Group("/debug/pprof")
-	{
-		pprofGroup.GET("/", gin.WrapF(pprof.Index))
-		pprofGroup.GET("/cmdline", gin.WrapF(pprof.Cmdline))
-		pprofGroup.GET("/profile", gin.WrapF(pprof.Profile))
-		pprofGroup.GET("/symbol", gin.WrapF(pprof.Symbol))
-		pprofGroup.GET("/trace", gin.WrapF(pprof.Trace))
-		pprofGroup.GET("/allocs", gin.WrapH(pprof.Handler("allocs")))
-		pprofGroup.GET("/block", gin.WrapH(pprof.Handler("block")))
-		pprofGroup.GET("/goroutine", gin.WrapH(pprof.Handler("goroutine")))
-		pprofGroup.GET("/heap", gin.WrapH(pprof.Handler("heap")))
-		pprofGroup.GET("/mutex", gin.WrapH(pprof.Handler("mutex")))
-		pprofGroup.GET("/threadcreate", gin.WrapH(pprof.Handler("threadcreate")))
-	}
+	// ── pprof server (localhost-only, separate from main listener) ───────────
+	// pprof is intentionally NOT registered on the main router. It binds only
+	// to 127.0.0.1:6060 so it is unreachable from Nginx or external traffic.
+	pprofMux := http.NewServeMux()
+	pprofMux.HandleFunc("/debug/pprof/", pprof.Index)
+	pprofMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	pprofMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	pprofMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	pprofMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	pprofMux.Handle("/debug/pprof/allocs", pprof.Handler("allocs"))
+	pprofMux.Handle("/debug/pprof/block", pprof.Handler("block"))
+	pprofMux.Handle("/debug/pprof/goroutine", pprof.Handler("goroutine"))
+	pprofMux.Handle("/debug/pprof/heap", pprof.Handler("heap"))
+	pprofMux.Handle("/debug/pprof/mutex", pprof.Handler("mutex"))
+	pprofMux.Handle("/debug/pprof/threadcreate", pprof.Handler("threadcreate"))
+	pprofSrv := &http.Server{Addr: "127.0.0.1:6060", Handler: pprofMux}
+	go func() {
+		logger.Info().Str("addr", pprofSrv.Addr).Msg("pprof server listening (localhost only)")
+		if err := pprofSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Warn().Err(err).Msg("pprof server stopped")
+		}
+	}()
 
 	// ── HTTP server ───────────────────────────────────────────────────────────
 	srv := &http.Server{
@@ -215,6 +222,7 @@ func run() error {
 	if err := srv.Shutdown(ctx); err != nil {
 		return fmt.Errorf("graceful shutdown: %w", err)
 	}
+	_ = pprofSrv.Shutdown(ctx)
 
 	logger.Info().Msg("server stopped")
 	return nil

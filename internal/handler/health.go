@@ -18,9 +18,10 @@ const jsonContentType = "application/json; charset=utf-8"
 
 // Pre-serialised JSON responses to avoid json.Marshal per request.
 var (
-	duplicateJSON = []byte(`{"error":"duplicate_request","details":"an identical request was received within the deduplication window"}`)
-	storeErrJSON  = []byte(`{"error":"store_unavailable","details":"deduplication store is unreachable; request rejected (fail-closed mode)"}`)
-	healthOKJSON  = []byte(`{"status":"ok"}`)
+	duplicateJSON  = []byte(`{"error":"duplicate_request","details":"an identical request was received within the deduplication window"}`)
+	storeErrJSON   = []byte(`{"error":"store_unavailable","details":"deduplication store is unreachable; request rejected (fail-closed mode)"}`)
+	healthOKJSON   = []byte(`{"status":"ok"}`)
+	healthErrJSON  = []byte(`{"error":"store_unavailable"}`)
 )
 
 type errorBody struct {
@@ -43,10 +44,7 @@ func NewHealth(s store.Store, logger zerolog.Logger) *HealthHandler {
 func (h *HealthHandler) Handle(c *gin.Context) {
 	if err := h.store.Ping(c.Request.Context()); err != nil {
 		h.logger.Warn().Err(err).Msg("health check: store ping failed")
-		c.JSON(http.StatusServiceUnavailable, errorBody{
-			Error:   "store_unavailable",
-			Details: err.Error(),
-		})
+		c.Data(http.StatusServiceUnavailable, jsonContentType, healthErrJSON)
 		return
 	}
 
