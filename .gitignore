@@ -2,12 +2,18 @@
 bin/
 *.exe
 *.test
+server
 
 # Coverage
 coverage.out
+coverage.html
 
 # Logs
 log/
+
+# Security scanner output
+gosec-report.json
+gosec-stderr.log
 
 # IDE / editor
 .idea/
@@ -21,9 +27,5 @@ log/
 Thumbs.db
 nul
 
-# Docker image tarballs
-*.tar
-
 # Environment overrides (keep .env.example)
 .env
-log/app.log
